@@ -1,0 +1,116 @@
+cabal-version:      3.0
+name:               algebirc
+version:            0.1.0.0
+synopsis:           Math-based algebraic obfuscation system
+description:
+  A Turing-complete obfuscation engine built on pure mathematical
+  structures: finite fields, degree-bounded polynomials, permutation
+  groups, and a stateful evaluator with formal guarantees on
+  determinism, termination, and growth bounds.
+license:            MIT
+author:             xera
+build-type:         Simple
+
+common shared
+  default-language: Haskell2010
+  ghc-options:      -Wall -Wcompat -O2
+  default-extensions:
+    ScopedTypeVariables
+    DeriveGeneric
+    DeriveAnyClass
+    OverloadedStrings
+    StrictData
+
+library
+  import:           shared
+  hs-source-dirs:   src
+  exposed-modules:
+    Algebirc
+    Algebirc.Core.Types
+    Algebirc.Core.FiniteField
+    Algebirc.Core.Polynomial
+    Algebirc.Core.Group
+    Algebirc.Evaluator.Eval
+    Algebirc.Obfuscation.AST
+    Algebirc.Obfuscation.Encoder
+    Algebirc.Obfuscation.Transform
+    Algebirc.Obfuscation.NonlinearTransform
+    Algebirc.Obfuscation.DegreeControl
+    Algebirc.Ordering.Fingerprint
+    Algebirc.Ordering.MathOrder
+    Algebirc.Ordering.Scheduler
+    Algebirc.Analysis.DegreeTracker
+    Algebirc.Analysis.Invertibility
+    Algebirc.Analysis.Leakage
+    Algebirc.Analysis.FormalEntropy
+    Algebirc.Analysis.AlgebraicLeakage
+    Algebirc.Analysis.CircuitComplexity
+    Algebirc.Analysis.LinearizationAttack
+    Algebirc.Analysis.AdversarialOracle
+    Algebirc.Analysis.CompositionCollapse
+    Algebirc.Analysis.StructuralProbe
+    Algebirc.Integration.HaskellParser
+    Algebirc.Integration.FileIO
+    Algebirc.Compiler.Metamorphic
+    Algebirc.Compiler.Standalone
+    Algebirc.Geometry.EllipticCurve
+    Algebirc.Geometry.Isogeny
+    Algebirc.Geometry.CMAction
+    Algebirc.Geometry.HyperellipticCurve
+    Algebirc.Geometry.RichelotIsogeny
+    Algebirc.Geometry.SiegelModular
+    Algebirc.Geometry.GeometricPipeline
+    Algebirc.Runtime.SecretShare
+    Algebirc.Runtime.TransformFold
+    Algebirc.Runtime.InvariantGuard
+  build-depends:
+    base             >= 4.17 && < 5,
+    bytestring       >= 0.11,
+    containers       >= 0.6,
+    mtl              >= 2.2,
+    vector           >= 0.13,
+    random           >= 1.2,
+    process          >= 1.6,
+    deepseq          >= 1.4,
+    cryptonite       >= 0.30,
+    memory           >= 0.18,
+    aeson            >= 2.1,
+    text             >= 2.0,
+    haskell-src-exts >= 1.23,
+    directory        >= 1.3,
+    filepath         >= 1.4
+
+executable algebirc
+  import:           shared
+  hs-source-dirs:   app
+  main-is:          Main.hs
+  build-depends:
+    base >= 4.17 && < 5,
+    algebirc,
+    containers >= 0.6,
+    bytestring >= 0.11,
+    directory  >= 1.3,
+    filepath   >= 1.4
+
+test-suite algebirc-test
+  import:           shared
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Spec.hs
+  other-modules:
+    Core.FiniteFieldSpec
+    Core.PolynomialSpec
+    StressSpec
+    AnalysisSpec
+    IntegrationSpec
+    NonlinearSpec
+    AdvancedAnalysisSpec
+    AdversarialSpec
+  build-depends:
+    base             >= 4.17 && < 5,
+    algebirc,
+    QuickCheck       >= 2.14,
+    hspec            >= 2.11,
+    directory        >= 1.3,
+    filepath         >= 1.4,
+    vector           >= 0.13
