@@ -278,5 +278,7 @@ note   = {Experimental research prototype. \url{https://github.com/your-org/alge
 | Implementation language | Pure Haskell |
 | Unsafe operations | None |
 | FFI dependencies | None |
-## License
-MIT
+---
+*Spec Version: 1 (Extended)*
+*Date: 2026-02-17*
+*Author: Hallene*
