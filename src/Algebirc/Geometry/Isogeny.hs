@@ -156,46 +156,64 @@ walkCurves ec0 steps = scanl (\ec (seed, ell) ->
 --
 -- Strategy:
 -- 1. Lift each coefficient to a point on E₀
--- 2. Walk the isogeny chain: φₖ ∘ ... ∘ φ₁(P)
+-- 2. Walk the isogeny chain: φₖ ∘ ... ∘ φ₁(P), using the correct
+--    intermediate curve Eᵢ as the domain for each step i
 -- 3. Project back to field elements (x-coordinates)
 --
 -- The result is algebraically bound to the isogeny path —
 -- reversing requires knowing the kernel points.
+--
+-- Fix: each fold step uses the curve produced by the *previous* step
+-- (carried as `curEc`), not the original `ec0`. This ensures
+-- φᵢ: Eᵢ₋₁ → Eᵢ is applied in the correct domain.
 transportCoeffs :: EllipticCurve -> [(Integer, Int)] -> [Integer] -> [Integer]
 transportCoeffs ec0 steps coeffs =
   let p = ecPrime ec0
-      -- For each step, compute the curve chain
-      curves = walkCurves ec0 steps
-      kernelPts = zipWith (\ec (seed, ell) -> 
-        let kernel = findKernelPoint ec (fromIntegral ell) seed
-            pts = [ ecScalarMul ec (fromIntegral k) kernel | k <- [1..ell-1] ]
-        in (kernel, pts)
-        ) curves steps
-      
-      -- Lift coefficients to points on E₀
+
+      -- walkCurves yields [E₀, E₁, E₂, …, Eₙ].
+      -- We zip domain curves (E₀..Eₙ₋₁) with the step that produces the next.
+      curves = walkCurves ec0 steps                -- length = |steps| + 1
+      domainCurves = zip curves steps              -- (Eᵢ, stepᵢ) pairs
+
+      -- Pre-compute (kernel, kernel-point-list) for each step,
+      -- using the correct domain curve Eᵢ.
+      kernelData = map (\(ec, (seed, ell)) ->
+          let kernel = findKernelPoint ec (fromIntegral ell) seed
+              kPts   = [ ecScalarMul ec (fromIntegral k) kernel
+                       | k <- [1 .. ell - 1] ]
+          in (ec, kernel, kPts)
+        ) domainCurves
+
+      -- Lift coefficients to points on E₀.
       points = map (liftToPoint ec0 . (`mod` p)) coeffs
-      
-      -- Walk each point through the chain
-      transported = map (\pt ->
-        foldl' (\curPt ((kernel, kPts), (_, _)) ->
-          -- Map point through this isogeny step
-          case curPt of
-            Infinity -> Infinity
-            _ -> veluMapPoint ec0 kernel kPts curPt
-          ) pt (zip kernelPts steps)
+
+      -- Walk each point through the chain, threading current curve.
+      -- State: (curPt, curEc) — curEc is the domain of the *next* step.
+      transported = map (\pt0 ->
+        let (finalPt, _) =
+              foldl' (\(curPt, _curEc) (stepEc, kernel, kPts) ->
+                let nextPt = case curPt of
+                               Infinity -> Infinity
+                               _        -> veluMapPoint stepEc kernel kPts curPt
+                    -- Codomain is already tracked by `curves`; we only
+                    -- need the domain curve for veluMapPoint, which is stepEc.
+                in (nextPt, stepEc)
+              ) (pt0, ec0) kernelData
+        in finalPt
         ) points
-      
-      -- Project back to field elements
+
   in map projectFromPoint transported
 
--- | Inverse transport (approximate — requires dual isogeny data).
--- For obfuscation, we store the forward path only.
--- True inversion requires the kernel points (secret).
+-- | Inverse transport (requires dual isogeny data).
+-- For obfuscation, the forward path is stored; true inversion requires
+-- knowing the kernel points (secret).
+--
+-- Fix: start from the *actual* final curve Eₙ produced by the forward walk,
+-- then walk reversed steps from Eₙ back toward E₀.
 inverseTransportCoeffs :: EllipticCurve -> [(Integer, Int)] -> [Integer] -> [Integer]
 inverseTransportCoeffs ec steps coeffs =
-  -- Reverse the walk direction
-  let revSteps = reverse steps
-      finalCurve = isogenyWalk ec steps
+  let finalCurve = isogenyWalk ec steps
+      revSteps   = reverse steps
   in transportCoeffs finalCurve revSteps coeffs
 
 -- ============================================================

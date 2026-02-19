@@ -1,0 +1,32 @@
+# Build artifacts
+dist-newstyle/
+dist/
+.cabal-sandbox/
+cabal.sandbox.config
+
+# Shell scripts (not core)
+*.sh
+*.bat
+*.ps1
+
+# Status/docs (not core)
+PROJECT_STATUS.md
+README.md
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# GHC
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+*.chi
+*.chs.h
+
+# Misc
+.DS_Store
