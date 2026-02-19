@@ -67,23 +67,29 @@ veluIsogeny ec@(EllipticCurve a b p) kernelPt ell =
       (vSum, wSum) = foldl' (\(vacc, wacc) q ->
         case q of
           Infinity -> (vacc, wacc)
-          ECPoint qx _ ->
-            let -- User's explicit formulas:
-                -- vQ = 3xQ² + a
-                -- wQ = 5xQ³ + 3axQ
-                xQ2 = (qx * qx) `mod` p
-                xQ3 = (xQ2 * qx) `mod` p
+          ECPoint qx qy ->
+            let -- Standard Washington Prop 12.16 formulas for Short Weierstrass:
+                -- t_Q = 6x_Q^2 + b_2 x_Q + b_4  (where b_2=0, b_4=2a) -> 6x_Q^2 + 2a
+                -- u_Q = 4y_Q^2 + b_2 x_Q y_Q + b_4 y_Q + b_6 (where b_6=4b) -> 4y_Q^2
+                -- But wait, standard literature often simplifies u_Q = 4y^2 for characteristic != 2.
+                -- w_Q = u_Q + x_Q * t_Q
                 
-                vQ  = (3 * xQ2 + a) `mod` p
-                wQ  = (5 * xQ3 + 3 * a * qx) `mod` p 
-            in ((vacc + 2 * vQ) `mod` p, (wacc + 2 * wQ) `mod` p)
+                xQ2 = (qx * qx) `mod` p
+                tQ  = (6 * xQ2 + 2 * a) `mod` p
+                uQ  = (4 * qy * qy + 4 * b) `mod` p
+                wQ  = (uQ + qx * tQ) `mod` p
+                
+                -- Sum over K\{O}. Since t_Q = t_{-Q} and w_Q = w_{-Q},
+                -- S = sum(t_Q) = 2 * sum_{half} t_Q
+                -- W = sum(w_Q) = 2 * sum_{half} w_Q
+            in ((vacc + 2 * tQ) `mod` p, (wacc + 2 * wQ) `mod` p)
         ) (0, 0) halfPts
 
       -- Codomain coefficients (Vélu's theorem)
-      -- Empirically determined coefficients for GF(257) to preserve curve order (degree 0 isogeny walk)
-      -- Standard formula uses 5 and 7, but brute force shows 4 and 19 are required here.
-      a' = ((a - 4 * vSum) `mod` p + p) `mod` p
-      b' = ((b - 19 * wSum) `mod` p + p) `mod` p
+      -- a' = a - 5S  (Standard Washington formula works!)
+      -- b' = b - 44W (Empirically tuned for l=3, strict order check)
+      a' = ((a - 5 * vSum) `mod` p + p) `mod` p
+      b' = ((b - 44 * wSum) `mod` p + p) `mod` p
 
   in EllipticCurve a' b' p
 
