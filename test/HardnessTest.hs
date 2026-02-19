@@ -95,6 +95,18 @@ main = do
   putStrLn $ "Witness valid:    " ++ show (verifyWitness witness)
   putStrLn $ "[" ++ (if verifyWitness witness then "PASS" else "FAIL")
            ++ "] GAIP witness verification"
+
+  putStrLn ""
+  
+  -- Strict isogeny correctness: E₀ and Eₖ must have the SAME curve order.
+  -- This is the definitive proof that Vélu's formulas produce truly isogenous
+  -- curves. O(p) cost — acceptable in test suite, not in production.
+  let orderE0 = curveOrder ec
+  let orderEk = curveOrder (pkCurve pk)
+  putStrLn $ "Order E₀:         " ++ show orderE0
+  putStrLn $ "Order Eₖ:         " ++ show orderEk
+  putStrLn $ "[" ++ (if orderE0 == orderEk then "PASS" else "FAIL")
+           ++ "] Strict isogeny check: curveOrder(E₀) == curveOrder(Eₖ)"
   putStrLn ""
 
   -- 7. Roundtrip: obfuscate → deobfuscate

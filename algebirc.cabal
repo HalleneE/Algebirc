@@ -123,3 +123,11 @@ executable hardness-test
   build-depends:
     base >= 4.17 && < 5,
     algebirc
+
+executable debug-velu
+  import:           shared
+  hs-source-dirs:   .
+  main-is:          debug_velu.hs
+  build-depends:
+    base >= 4.17 && < 5,
+    algebirc

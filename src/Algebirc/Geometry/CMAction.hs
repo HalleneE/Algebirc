@@ -33,6 +33,7 @@ module Algebirc.Geometry.CMAction
 
 import Algebirc.Core.Types
 import Algebirc.Geometry.EllipticCurve
+import Algebirc.Geometry.Isogeny (veluIsogeny, findKernelPoint)
 import Data.List (foldl')
 
 -- ============================================================
@@ -101,31 +102,6 @@ cmAct ec ell direction =
                 then kernel
                 else ecNegate p kernel
   in veluIsogeny ec kernel' (fromIntegral ell)
-  where
-    -- Reuse findKernelPoint from Isogeny module
-    findKernelPoint ec' ell' s =
-      let n = curveOrder ec'
-          cofactor = n `div` ell'
-          basePt = liftToPoint ec' s
-      in ecScalarMul ec' cofactor basePt
-
-    veluIsogeny ec' kernel' ell' =
-      let a = ecA ec'
-          b = ecB ec'
-          p' = ecPrime ec'
-          halfPts = take ((ell' - 1) `div` 2) 
-                    [ ecScalarMul ec' (fromIntegral k) kernel' 
-                    | k <- [1..ell'-1] ]
-          (vSum, wSum) = foldl' (\(va, wa) q ->
-            case q of
-              Infinity -> (va, wa)
-              ECPoint qx _ ->
-                let gxQ = (3 * qx * qx + a) `mod` p'
-                in ((va + 2 * gxQ) `mod` p', (wa + 2 * (gxQ + gxQ)) `mod` p')
-            ) (0, 0) halfPts
-          a' = ((a - 5 * vSum) `mod` p' + p') `mod` p'
-          b' = ((b - 7 * wSum) `mod` p' + p') `mod` p'
-      in EllipticCurve a' b' p'
 
 -- | Apply multiple CM actions in sequence.
 -- This creates a walk in the CM class group graph.

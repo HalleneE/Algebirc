@@ -262,8 +262,9 @@ csidh_GA_Problem sk =
 --   1. Same base field GF(p)
 --   2. Both non-singular (4a³ + 27b² ≠ 0)
 --   3. Both satisfy the Hasse bound: |#E - (p+1)| ≤ 2√p
---      (weaker than exact order equality, but correct for the
---       simplified Vélu formulas used in cmAct)
+--      (Hasse bound check is O(1) assuming parameters are bounded,
+--       whereas strict equality #E = #E₀ requires O(p) point counting for small fields.
+--       The test suite uses strict equality to verify isogeny correctness.)
 --
 -- Note: this does NOT solve the GAIP. It only checks structural
 -- consistency. The witness remains computationally binding.
