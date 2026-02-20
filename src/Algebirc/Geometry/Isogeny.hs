@@ -41,55 +41,61 @@ import Data.List (foldl')
 -- | Vélu's isogeny: given curve E and kernel point P of exact order ℓ,
 -- compute the codomain curve E' = E/⟨P⟩.
 --
--- Uses the standard Vélu formulas:
---   For each Q = (xQ, yQ) in the half-kernel K* = {P, 2P, …, ((ℓ-1)/2)P}:
---     gxQ = 3·xQ² + a       (derivative of curve equation w.r.t. x)
---     gyQ = -2·yQ            (derivative of curve equation w.r.t. y)
---     vQ  = gxQ              (v-contribution from Q)
---     uQ  = gyQ²             (u-contribution from Q)
---     wQ  = uQ + vQ·xQ       (w-contribution from Q)
+-- Uses the standard Vélu formulas (Washington, Prop 12.16, but properly 
+-- translated from Vélu 1971) for a short Weierstrass curve y²=x³+ax+b:
 --
---   v = Σ 2·vQ,   w = Σ 2·wQ    (factor 2 for {Q, -Q} pairs)
---   a' = a - 5·v (mod p)
---   b' = b - 7·w (mod p)
+--   For each Q=(xQ,yQ) in the half-kernel K* = {P, 2P, …, ((ℓ-1)/2)·P}:
+--     vQ = 3·xQ² + a           ← g_x(Q) = d/dx(x³+ax+b)
+--     uQ = 2·yQ²               ← Vélu literal: 2y² (literature often cites 4y² 
+--                                as the *paired* sum, creating confusion)
+--     wQ = uQ + xQ·vQ
+--
+--   Since v_{-Q}=v_Q and w_{-Q}=w_Q, summing over full kernel K\{O}
+--   just doubles each half-kernel term:
+--     S = Σ_{K\{O}} vQ  =  2 · Σ_{K*} vQ
+--     W = Σ_{K\{O}} wQ  =  2 · Σ_{K*} wQ
+--
+--   Codomain coefficients:
+--     a' = a - 5·S  (mod p)
+--     b' = b - 7·W  (mod p)   ← k=7 is the algebraically correct constant
 --
 -- Returns E': y² = x³ + a'x + b' (short Weierstrass form).
+--
+-- Note on previous bug: an earlier version used t_Q = 6x²+2a (= 2·g_x,
+-- doubled) and u_Q = 4y²+4b (extra +4b term). These compounding errors
+-- required a fudge factor of k=44 that only coincidentally preserved the
+-- curve order for the specific curve y²=x³+3x+7 over GF(257). The error
+-- was detected by cross-curve testing on y²=x³+5x+3 where k=44 failed.
 veluIsogeny :: EllipticCurve -> ECPoint -> Int -> EllipticCurve
 veluIsogeny ec Infinity _ = ec  -- trivial isogeny
 veluIsogeny ec@(EllipticCurve a b p) kernelPt ell =
-  let -- Half-kernel: {P, 2P, …, ((ℓ-1)/2)P}
-      -- Each entry represents a pair {Q, -Q} in the full kernel.
+  let -- Half-kernel K* = {P, 2P, …, ((ℓ-1)/2)·P}
+      -- Each element represents a {Q, -Q} pair in the full kernel K\{O}.
       halfPts = [ ecScalarMul ec (fromIntegral k) kernelPt
                 | k <- [1 .. (ell - 1) `div` 2] ]
 
-      -- Vélu's v and w sums over the half-kernel.
-      -- Factor of 2 accounts for the {Q, -Q} pair.
+      -- Vélu sums over the half-kernel (factor 2 accounts for {Q,-Q} pairs).
       (vSum, wSum) = foldl' (\(vacc, wacc) q ->
         case q of
-          Infinity -> (vacc, wacc)
+          Infinity  -> (vacc, wacc)
           ECPoint qx qy ->
-            let -- Standard Washington Prop 12.16 formulas for Short Weierstrass:
-                -- t_Q = 6x_Q^2 + b_2 x_Q + b_4  (where b_2=0, b_4=2a) -> 6x_Q^2 + 2a
-                -- u_Q = 4y_Q^2 + b_2 x_Q y_Q + b_4 y_Q + b_6 (where b_6=4b) -> 4y_Q^2
-                -- But wait, standard literature often simplifies u_Q = 4y^2 for characteristic != 2.
-                -- w_Q = u_Q + x_Q * t_Q
-                
-                xQ2 = (qx * qx) `mod` p
-                tQ  = (6 * xQ2 + 2 * a) `mod` p
-                uQ  = (4 * qy * qy + 4 * b) `mod` p
-                wQ  = (uQ + qx * tQ) `mod` p
-                
-                -- Sum over K\{O}. Since t_Q = t_{-Q} and w_Q = w_{-Q},
-                -- S = sum(t_Q) = 2 * sum_{half} t_Q
-                -- W = sum(w_Q) = 2 * sum_{half} w_Q
-            in ((vacc + 2 * tQ) `mod` p, (wacc + 2 * wQ) `mod` p)
+            let xQ2 = (qx * qx) `mod` p
+                -- Exact Vélu 1971 formulas for point Q:
+                vQ  = (3 * xQ2 + a)    `mod` p   -- t_Q = 3x²+a
+                uQ  = (2 * qy * qy)    `mod` p   -- u_Q = 2y² (NOT 4y²)!
+                wQ  = (uQ + qx * vQ)   `mod` p
+                -- When summing over K\{O}, the pair {Q, -Q} contributes 2*vQ and 2*wQ.
+                -- Note: 2*wQ expands to 2(2y² + x(3x²+a)) = 4y² + 2x(vQ), which matches
+                -- the simplified "4y²" sum found in some literature.
+            in ((vacc + 2 * vQ) `mod` p, (wacc + 2 * wQ) `mod` p)
         ) (0, 0) halfPts
 
-      -- Codomain coefficients (Vélu's theorem)
-      -- a' = a - 5S  (Standard Washington formula works!)
-      -- b' = b - 44W (Empirically tuned for l=3, strict order check)
+      -- Codomain coefficients — Washington Prop 12.16:
+      --   a' = a - 5·S
+      --   b' = b - 7·W
+      -- k=5 and k=7 are algebraically correct for all ℓ-isogenies.
       a' = ((a - 5 * vSum) `mod` p + p) `mod` p
-      b' = ((b - 44 * wSum) `mod` p + p) `mod` p
+      b' = ((b - 7 * wSum) `mod` p + p) `mod` p
 
   in EllipticCurve a' b' p
 

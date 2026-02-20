@@ -105,8 +105,8 @@ test-suite algebirc-test
     AnalysisSpec
     IntegrationSpec
     NonlinearSpec
-    AdvancedAnalysisSpec
-    AdversarialSpec
+    PropertySpec
+    RichelotSpec
   build-depends:
     base             >= 4.17 && < 5,
     algebirc,
@@ -124,10 +124,4 @@ executable hardness-test
     base >= 4.17 && < 5,
     algebirc
 
-executable debug-velu
-  import:           shared
-  hs-source-dirs:   .
-  main-is:          debug_velu.hs
-  build-depends:
-    base >= 4.17 && < 5,
-    algebirc
+

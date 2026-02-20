@@ -139,9 +139,14 @@ richelotDualQuad p g1 g2 delta =
       -- These arise from the 2-torsion structure of the Jacobian
       deltaInv = if delta /= 0 then modInv delta p else 1
       
-      c0 = ((a11 * a22 - a12 * a21) * deltaInv) `mod` p
-      c1 = ((a12 * a20 - a10 * a22) * deltaInv) `mod` p
-      c2 = ((a10 * a21 - a11 * a20) * deltaInv) `mod` p
+      -- Corrected formula for the Wronskian (u'v - uv') of two quadratics
+      -- (2 a_2 x + a_1)(b_2 x^2 + b_1 x + b_0) - (a_2 x^2 + a_1 x + a_0)(2 b_2 x + b_1)
+      -- c2 (x^2 term) = a2*b1 - a1*b2
+      c2 = ((a12 * a21 - a11 * a22) * deltaInv) `mod` p
+      -- c1 (x^1 term) = 2*(a2*b0 - a0*b2)
+      c1 = (2 * (a12 * a20 - a10 * a22) * deltaInv) `mod` p
+      -- c0 (x^0 term) = a1*b0 - a0*b1
+      c0 = ((a11 * a20 - a10 * a21) * deltaInv) `mod` p
   in [(c0 + p) `mod` p, (c1 + p) `mod` p, (c2 + p) `mod` p]
 
 -- ============================================================
