@@ -110,7 +110,12 @@ let recovered = reconstructCoeffs shared
 
 - Provable iO: Security guarantees are computational and heuristic, not formal
 - Side-channel resistance: No protection against timing or power analysis
-
+- Provable iO: Security guarantees are computational and heuristic, not formal
+- Side-channel resistance: No protection against timing or power analysis
+- **CSIDH Strict Compliance:** `cmAct` does not enforce supersingular 
+  curves or p ≡ 3 (mod 4) as required for strict CSIDH parameters. 
+  The Vélu implementation is generalized to work on both ordinary and 
+  supersingular curves. Full CSIDH-512 compliance is future work.
 *This is an experimental research prototype. Do not rely on it for protecting high-value cryptographic keys without independent specialized review.*
 
 ---
