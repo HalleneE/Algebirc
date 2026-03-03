@@ -110,8 +110,6 @@ let recovered = reconstructCoeffs shared
 
 - Provable iO: Security guarantees are computational and heuristic, not formal
 - Side-channel resistance: No protection against timing or power analysis
-- Provable iO: Security guarantees are computational and heuristic, not formal
-- Side-channel resistance: No protection against timing or power analysis
 - **CSIDH Strict Compliance:** `cmAct` does not enforce supersingular 
   curves or p ≡ 3 (mod 4) as required for strict CSIDH parameters. 
   The Vélu implementation is generalized to work on both ordinary and 
@@ -134,6 +132,6 @@ If you reference Algebirc or our QuickCheck isogeny formalization in academic wo
 @software{algebirc2026,
   title  = {Algebirc: An Algebraic Obfuscation Engine},
   year   = {2026},
-  note   = {Experimental research prototype validating exact Vélu formulas via randomized property testing. \url{https://github.com/your-org/algebirc}}
+  note   = {Experimental research prototype validating exact Vélu formulas via randomized property testing. \url{https://github.com/HalleneE/algebirc}}
 }
 ```
