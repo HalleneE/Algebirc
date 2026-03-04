@@ -63,7 +63,7 @@ This provides strict statistical and empirical proof that the geometric obfuscat
 
 ### Build
 ```bash
-git clone https://github.com/your-org/algebirc.git
+git clone https://github.com/Algebirc/algebirc.git
 cd algebirc
 cabal update
 cabal build
