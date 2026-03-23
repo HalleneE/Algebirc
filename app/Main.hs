@@ -49,10 +49,10 @@ main = do
     [] -> do
       printUsage
       putStrLn ""
-      putStrLn "Jalankan 'algebirc demo' untuk demo lengkap."
+      putStrLn "Execute 'algebirc demo' for a comprehensive pipeline demonstration."
 
     _ -> do
-      putStrLn "Perintah tidak dikenal."
+      putStrLn "Error: Unrecognized command directive."
       printUsage
 
 -- ============================================================
@@ -61,23 +61,23 @@ main = do
 
 printUsage :: IO ()
 printUsage = do
-  putStrLn "╔══════════════════════════════════════════════════════╗"
-  putStrLn "║        Algebirc — Math-Based Obfuscation Engine     ║"
-  putStrLn "╚══════════════════════════════════════════════════════╝"
+  putStrLn "╔══════════════════════════════════════════════════════════════════╗"
+  putStrLn "║       Algebirc: Algebraic Isogeny-Based Obfuscation Engine       ║"
+  putStrLn "╚══════════════════════════════════════════════════════════════════╝"
   putStrLn ""
-  putStrLn "Penggunaan:"
-  putStrLn "  algebirc obfuscate <input.hs> [-o output.hs]"
-  putStrLn "  algebirc deobfuscate <file.meta> [-o recovered.hs]"
-  putStrLn "  algebirc analyze <input.hs>"
-  putStrLn "  algebirc compile <input.hs> [-o output.exe]"
-  putStrLn "  algebirc demo"
-  putStrLn "  algebirc help"
+  putStrLn "SYNOPSIS:"
+  putStrLn "  algebirc obfuscate <input.hs> [-o out.hs]      -- Construct algebraic obfuscation via degree-bounded isogeny transformations"
+  putStrLn "  algebirc deobfuscate <file.meta> [-o rec.hs]   -- Recover program representation from obfuscation metadata"
+  putStrLn "  algebirc analyze <input.hs>                    -- Perform rigorous algebraic and structural metric analysis"
+  putStrLn "  algebirc compile <input.hs> [-o out.exe]       -- Ahead-of-Time compilation of the obfuscated program representation"
+  putStrLn "  algebirc demo                                  -- Execute comprehensive algorithmic demonstration pipeline"
+  putStrLn "  algebirc help                                  -- Display this technical specification"
 
 runObfuscate :: FilePath -> FilePath -> IO ()
 runObfuscate inputFile outputFile = do
   let cfg = defaultConfig
-  putStrLn $ "📁 Input:  " ++ inputFile
-  putStrLn $ "📦 Output: " ++ outputFile
+  putStrLn $ "[+] Loading Source Module: " ++ inputFile
+  putStrLn $ "[+] Output Target: " ++ outputFile
   putStrLn ""
 
   result <- obfuscateFile cfg inputFile outputFile
@@ -85,11 +85,11 @@ runObfuscate inputFile outputFile = do
     Left err -> do
       putStrLn $ "✗ Error: " ++ err
     Right od -> do
-      putStrLn $ "✓ Obfuscation berhasil!"
-      putStrLn $ "  Module: " ++ smName (odModule od)
-      putStrLn $ "  Deklarasi: " ++ show (length (smDecls (odModule od)))
-      putStrLn $ "  Blocks: " ++ show (length (odBlocks od))
-      putStrLn $ "  Metadata: " ++ outputFile ++ ".meta"
+      putStrLn $ "[✓] Algebraic obfuscation synthesis completed."
+      putStrLn $ "  Target Module    : " ++ smName (odModule od)
+      putStrLn $ "  AST Declarations : " ++ show (length (smDecls (odModule od)))
+      putStrLn $ "  Algebraic Blocks : " ++ show (length (odBlocks od))
+      putStrLn $ "  Metadata Blob    : " ++ outputFile ++ ".meta"
       putStrLn ""
       -- Running analysis
       let transforms = odTransforms od
@@ -101,21 +101,21 @@ runObfuscate inputFile outputFile = do
 runDeobfuscate :: FilePath -> FilePath -> IO ()
 runDeobfuscate metaFile outputFile = do
   let cfg = defaultConfig
-  putStrLn $ "📁 Meta:   " ++ metaFile
-  putStrLn $ "📦 Output: " ++ outputFile
+  putStrLn $ "[+] Metadata Input: " ++ metaFile
+  putStrLn $ "[+] Output Target: " ++ outputFile
   putStrLn ""
 
   result <- deobfuscateFile cfg metaFile outputFile
   case result of
     Left err -> putStrLn $ "✗ Error: " ++ err
     Right _ -> do
-      putStrLn "✓ Deobfuscation berhasil!"
-      putStrLn $ "  File tersimpan: " ++ outputFile
+      putStrLn "[✓] Structural recovery completed."
+      putStrLn $ "  Recovered Source : " ++ outputFile
 
 runAnalyze :: FilePath -> IO ()
 runAnalyze inputFile = do
   let cfg = defaultConfig
-  putStrLn $ "📁 Analyze: " ++ inputFile
+  putStrLn $ "[+] Analysis Target: " ++ inputFile
   putStrLn ""
 
   parseResult <- parseHaskellFile inputFile
@@ -123,9 +123,9 @@ runAnalyze inputFile = do
     Left err -> putStrLn $ "✗ Parse error: " ++ err
     Right pr -> do
       let sm = prModule pr
-      putStrLn $ "  Module: " ++ smName sm
-      putStrLn $ "  Baris: " ++ show (prLineCount pr)
-      putStrLn $ "  Deklarasi: " ++ show (length (smDecls sm))
+      putStrLn $ "  Target Module    : " ++ smName sm
+      putStrLn $ "  LOC: " ++ show (prLineCount pr)
+      putStrLn $ "  AST Declarations : " ++ show (length (smDecls sm))
       putStrLn ""
 
       -- Encode dan analyze
@@ -134,7 +134,7 @@ runAnalyze inputFile = do
                         FuncDecl _ _ b -> b
                         ValDecl _ b -> b) (smDecls sm)
 
-      putStrLn "━━━ DegreeTracker ━━━"
+      putStrLn "━━━ DegreeTracker Heuristics ━━━"
       case head declExprs of
         expr -> case encodeExpr cfg expr of
           Left err -> putStrLn $ "  Encode error: " ++ show err
@@ -149,17 +149,17 @@ runAnalyze inputFile = do
       putStrLn $ formatProof proof
 
       putStrLn ""
-      putStrLn "━━━ Leakage Analysis ━━━"
+      putStrLn "━━━ Leakage Vulnerability Analysis ━━━"
       let leakage = analyzeLeakage cfg transforms Nothing
       putStrLn $ formatLeakageReport leakage
       
 runCompile :: FilePath -> FilePath -> IO ()
 runCompile inputFile outputFile = do
   putStrLn $ "╔══════════════════════════════════════════════════════╗"
-  putStrLn $ "║            Algebirc — Compiler (Phase 7)           ║"
+  putStrLn $ "║           Algebirc: AOT Compilation Engine           ║"
   putStrLn $ "╚══════════════════════════════════════════════════════╝"
-  putStrLn $ "📁 Input:  " ++ inputFile
-  putStrLn $ "📦 Output: " ++ outputFile
+  putStrLn $ "[+] Loading Source Module: " ++ inputFile
+  putStrLn $ "[+] Output Target: " ++ outputFile
   putStrLn ""
   
   -- Use processFile from FileIO
@@ -167,10 +167,10 @@ runCompile inputFile outputFile = do
   case res of
     Left err -> putStrLn $ "✗ Error: " ++ err
     Right od -> do
-      putStrLn "✓ Obfuscation successful (In-Memory)"
-      putStrLn "🚀 Compiling to Standalone Executable..."
+      putStrLn "[✓] In-Memory obfuscation successful."
+      putStrLn "[🚀] Initiating Ahead-Of-Time (AOT) binary compilation..."
       compileToExecutable od outputFile
-      putStrLn "✓ Compilation SUCCESS"
+      putStrLn "[✓] Ahead-of-Time compilation successful."
 
 -- ============================================================
 -- Demo (Phase 1+2 demo lama)
@@ -179,7 +179,7 @@ runCompile inputFile outputFile = do
 runDemo :: IO ()
 runDemo = do
   putStrLn "╔══════════════════════════════════════════════════════════════╗"
-  putStrLn "║           Algebirc — Math-Based Obfuscation Engine         ║"
+  putStrLn "║       Algebirc: Algebraic Isogeny-Based Obfuscation Engine       ║"
   putStrLn "║                    Full Pipeline Demo                      ║"
   putStrLn "╚══════════════════════════════════════════════════════════════╝"
   putStrLn ""
