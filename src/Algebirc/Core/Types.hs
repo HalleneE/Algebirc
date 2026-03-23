@@ -39,6 +39,7 @@ module Algebirc.Core.Types
   , sboxApply
   , sboxInvert
     -- * Algebraic Geometry Types
+  , Poly
   , ECPoint(..)
   , EllipticCurve(..)
   , HyperCurve(..)
@@ -79,6 +80,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.List (sortBy, groupBy)
 import Data.Ord (Down(..))
+import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as VU
 
 -- ============================================================
@@ -296,6 +298,10 @@ sboxInvert sb y = fromIntegral $ sboxInv sb VU.! fromIntegral (y `mod` sboxPrime
 -- Algebraic Geometry Types (Phase 8)
 -- ============================================================
 
+-- | Dense polynomials over GF(p). Contiguous layout for cache-friendly O(1) slicing.
+-- Backed by Boxed Vector of Integer to prevent silent truncation on 256-bit cryptography primes.
+type Poly = V.Vector Integer
+
 -- | Point on an elliptic curve E: y² = x³ + ax + b over GF(p).
 data ECPoint
   = Infinity                               -- ^ Point at infinity (identity)
@@ -316,7 +322,7 @@ data EllipticCurve = EllipticCurve
 -- For genus 2: deg(f) ∈ {5, 6}.
 -- Coefficients stored as [f₀, f₁, ..., f_{2g+1}] or [f₀, ..., f_{2g+2}].
 data HyperCurve = HyperCurve
-  { hcCoeffs :: ![Integer]  -- ^ Polynomial f(x) coefficients (ascending degree)
+  { hcCoeffs :: !Poly        -- ^ Polynomial f(x) coefficients (ascending degree)
   , hcGenus  :: !Int         -- ^ Genus (typically 2)
   , hcPrime  :: !Integer     -- ^ Field prime p
   } deriving (Show, Eq, Generic, NFData)
@@ -328,9 +334,9 @@ data HyperCurve = HyperCurve
 --   • deg(v) < deg(u)
 --   • u | (v² - f)
 data MumfordDiv = MumfordDiv
-  { mdU :: ![Integer]   -- ^ u(x) coefficients (ascending, monic)
-  , mdV :: ![Integer]   -- ^ v(x) coefficients (ascending)
-  , mdP :: !Integer      -- ^ Field prime
+  { mdU :: !Poly        -- ^ u(x) coefficients (ascending, monic)
+  , mdV :: !Poly        -- ^ v(x) coefficients (ascending)
+  , mdP :: !Integer     -- ^ Field prime
   } deriving (Show, Eq, Generic, NFData)
 
 -- | Igusa invariants (J₂, J₄, J₆, J₁₀) classifying genus-2 curves

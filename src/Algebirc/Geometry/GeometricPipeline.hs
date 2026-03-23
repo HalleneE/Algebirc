@@ -143,25 +143,25 @@ stageCMActionInv cfg coeffs =
 -- | Stage 3: Mix via Richelot (2,2)-isogeny on genus-2 Jacobian.
 stageRichelot :: GeometryConfig -> [Integer] -> [Integer]
 stageRichelot cfg coeffs =
-  let hc = HyperCurve (gcHyperCoeffs cfg) 2 (gcPrime cfg)
+  let hc = HyperCurve (iToV $ gcHyperCoeffs cfg) 2 (gcPrime cfg)
   in richelotTransport hc (gcRichelotDepth cfg) coeffs
 
 stageRichelotInv :: GeometryConfig -> [Integer] -> [Integer]
 stageRichelotInv cfg coeffs =
-  let hc = HyperCurve (gcHyperCoeffs cfg) 2 (gcPrime cfg)
+  let hc = HyperCurve (iToV $ gcHyperCoeffs cfg) 2 (gcPrime cfg)
   in richelotInverseTransport hc (gcRichelotDepth cfg) coeffs
 
 -- | Stage 4: Final mixing via Siegel modular walk constants.
 stageSiegel :: GeometryConfig -> [Integer] -> [Integer]
 stageSiegel cfg coeffs =
   let p = gcPrime cfg
-      hc = HyperCurve (gcHyperCoeffs cfg) 2 p
+      hc = HyperCurve (iToV $ gcHyperCoeffs cfg) 2 p
       j0 = igusaInvariants hc
   in siegelMix p j0 (gcSiegelEll cfg) (gcSiegelSteps cfg) coeffs
 
 stageSiegelInv :: GeometryConfig -> [Integer] -> [Integer]
 stageSiegelInv cfg coeffs =
   let p = gcPrime cfg
-      hc = HyperCurve (gcHyperCoeffs cfg) 2 p
+      hc = HyperCurve (iToV $ gcHyperCoeffs cfg) 2 p
       j0 = igusaInvariants hc
   in siegelUnmix p j0 (gcSiegelEll cfg) (gcSiegelSteps cfg) coeffs
