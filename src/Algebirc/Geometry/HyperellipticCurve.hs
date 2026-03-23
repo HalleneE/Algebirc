@@ -32,6 +32,10 @@ module Algebirc.Geometry.HyperellipticCurve
   , jacobianNegate
   , jacobianScalarMul
   , jacobianIdentity
+  , isIdentity
+    -- * Divisor Invariants
+  , validateDiv
+  , normalizeDiv
     -- * Igusa Invariants
   , igusaInvariants
   , igusaClebsch
@@ -239,7 +243,7 @@ cantorCompose (HyperCurve fCoeffs g p) (MumfordDiv u1 v1 _) (MumfordDiv u2 v2 _)
 
 -- | Cantor reduction: ensure deg(u) ≤ g.
 cantorReduce :: HyperCurve -> MumfordDiv -> MumfordDiv
-cantorReduce (HyperCurve fCoeffs g p) (MumfordDiv u v _)
+cantorReduce hc@(HyperCurve fCoeffs g p) (MumfordDiv u v _)
   | polyDeg u <= g = MumfordDiv (polyMakeMonic p u) v p
   | otherwise =
       -- u' = (f - v²) / u
@@ -249,7 +253,45 @@ cantorReduce (HyperCurve fCoeffs g p) (MumfordDiv u v _)
           -- v' = -v mod u'
           negV = polyNorm p $ map (\c -> (p - c) `mod` p) v
           vNew = polyMod p negV uNew
-      in cantorReduce (HyperCurve fCoeffs g p) (MumfordDiv (polyMakeMonic p uNew) (polyNorm p vNew) p)
+      in cantorReduce hc (MumfordDiv (polyMakeMonic p uNew) (polyNorm p vNew) p)
+
+-- ============================================================
+-- Divisor Invariants & Validation
+-- ============================================================
+
+-- | Canonical normalization of a Mumford Divisor.
+-- Ensures 'u' is monic and 'v' is strictly reduced mod 'u'.
+normalizeDiv :: MumfordDiv -> MumfordDiv
+normalizeDiv (MumfordDiv u v p) =
+  let uMonic = polyMakeMonic p u
+      vReduced = polyMod p v uMonic
+  in MumfordDiv uMonic (polyNorm p vReduced) p
+
+-- | Validate structural and geometric invariants of a divisor D = [u, v] on C: y^2 = f(x).
+-- 1. u is monic
+-- 2. deg(u) <= g (where g=2 here)
+-- 3. deg(v) < deg(u) (unless u=1, then v=0)
+-- 4. u | (v^2 - f)
+validateDiv :: HyperCurve -> MumfordDiv -> Bool
+validateDiv (HyperCurve fCoeffs g p) (MumfordDiv u v _) =
+  let uNorm = polyNorm p u
+      vNorm = polyNorm p v
+      isMonic = case reverse uNorm of
+                  (lc:_) -> lc == 1
+                  []     -> False
+      degU = polyDeg uNorm
+      degV = polyDeg vNorm
+      
+      -- condition: deg(v) < deg(u), except when u = 1 (identity) where v = 0
+      degCheck = if degU == 0 then (vNorm == [0]) else (degV < degU)
+      
+      -- condition: u | v^2 - f
+      v2 = polyMul p vNorm vNorm
+      v2MinusF = polySub p v2 fCoeffs
+      (_, remData) = polyDiv p v2MinusF uNorm
+      divides = polyNorm p remData == [0] || polyNorm p remData == []
+
+  in isMonic && (degU <= g) && degCheck && divides
 
 -- | Doubling on Jacobian: 2·D.
 jacobianDouble :: HyperCurve -> MumfordDiv -> MumfordDiv

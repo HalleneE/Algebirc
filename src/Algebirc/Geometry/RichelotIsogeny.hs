@@ -15,8 +15,13 @@
 -- and δᵢ are resultant-derived scalars.
 
 module Algebirc.Geometry.RichelotIsogeny
-  ( -- * Richelot Computation
-    richelotDual
+  ( -- * Context & Types
+    RichelotCtx(..)
+  , mkRichelotCtx
+    -- * Richelot Computation
+  , richelotEval
+  , richelotEvalToy
+  , richelotDual
   , richelotStep
   , richelotWalk
     -- * Factorization
@@ -29,7 +34,37 @@ module Algebirc.Geometry.RichelotIsogeny
 import Algebirc.Core.Types
 import Algebirc.Geometry.EllipticCurve (modInv, modPow)
 import Algebirc.Geometry.HyperellipticCurve
+import Algebirc.Core.Types
+import Algebirc.Geometry.EllipticCurve (modInv, modPow)
+import Algebirc.Geometry.HyperellipticCurve
 import Data.List (foldl')
+
+-- ============================================================
+-- Richelot Context
+-- ============================================================
+
+-- | Binds domain parameters for a rigorous Richelot isogeny map.
+-- Represents mapping from C: y^2 = G1 * G2 * G3 to C'.
+data RichelotCtx = RichelotCtx
+  { ctxFieldP :: Integer
+  , ctxG1     :: [Integer]
+  , ctxG2     :: [Integer]
+  , ctxG3     :: [Integer]
+  , ctxDualG1 :: [Integer]
+  , ctxDualG2 :: [Integer]
+  , ctxDualG3 :: [Integer]
+  } deriving (Show)
+
+-- | Smart constructor for Richelot context given the sextic factors.
+mkRichelotCtx :: Integer -> ([Integer], [Integer], [Integer]) -> RichelotCtx
+mkRichelotCtx p (g1, g2, g3) =
+  let delta1 = richelotDelta p g2 g3
+      delta2 = richelotDelta p g3 g1
+      delta3 = richelotDelta p g1 g2
+      h1 = richelotDualQuad p g2 g3 delta1
+      h2 = richelotDualQuad p g3 g1 delta2
+      h3 = richelotDualQuad p g1 g2 delta3
+  in RichelotCtx p g1 g2 g3 h1 h2 h3
 
 -- ============================================================
 -- Quadratic Factorization
@@ -148,6 +183,22 @@ richelotDualQuad p g1 g2 delta =
       -- c0 (x^0 term) = a1*b0 - a0*b1
       c0 = ((a11 * a20 - a10 * a21) * deltaInv) `mod` p
   in [(c0 + p) `mod` p, (c1 + p) `mod` p, (c2 + p) `mod` p]
+
+-- | Evaluate the True Richelot isogeny phi: Jac(C) -> Jac(C') on a divisor D.
+-- Currently locked out to prevent "looks correct but wrong" cryptographic bugs.
+richelotEval :: RichelotCtx -> MumfordDiv -> MumfordDiv
+richelotEval _ _ = error "Not implemented: True explicit Costello/Flynn Richelot formulas required"
+
+-- | Toy Richelot Evaluator
+-- Preserves Divisor structure to strictly test the pipeline normalization and composition flow
+-- without faking a real isogeny mapping.
+richelotEvalToy :: RichelotCtx -> MumfordDiv -> MumfordDiv
+richelotEvalToy ctx d@(MumfordDiv u v p) =
+  let dNorm = normalizeDiv d
+      dummyCurve = HyperCurve (polyMul p (polyMul p (ctxG1 ctx) (ctxG2 ctx)) (ctxG3 ctx)) 2 p
+  in if not (validateDiv dummyCurve dNorm)
+     then jacobianIdentity p
+     else dNorm
 
 -- ============================================================
 -- Richelot Walk
