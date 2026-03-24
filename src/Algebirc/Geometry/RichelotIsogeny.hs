@@ -39,7 +39,6 @@ module Algebirc.Geometry.RichelotIsogeny
 import Algebirc.Core.Types
 import Algebirc.Geometry.EllipticCurve (modInv, modPow)
 import Algebirc.Geometry.HyperellipticCurve
-import Algebirc.Core.Resultant
 import Algebirc.Core.Matrix
 import Data.List (foldl')
 import qualified Data.Vector as V

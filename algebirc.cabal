@@ -30,7 +30,6 @@ library
     Algebirc.Core.FiniteField
     Algebirc.Core.Polynomial
     Algebirc.Core.Group
-    Algebirc.Core.Resultant
     Algebirc.Core.Matrix
     Algebirc.Evaluator.Eval
     Algebirc.Obfuscation.AST

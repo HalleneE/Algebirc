@@ -28,6 +28,7 @@ module Algebirc.Geometry.HyperellipticCurve
   , polyExtGCD
   , polyMakeMonic
   , polyDeriv
+  , polyResultant
   , iToV
   , vToI
     -- * Jacobian Arithmetic (Cantor)
@@ -53,6 +54,7 @@ module Algebirc.Geometry.HyperellipticCurve
 
 import Algebirc.Core.Types
 import Algebirc.Geometry.EllipticCurve (modInv, modPow)
+import Algebirc.Core.Types
 import Data.List (foldl')
 import qualified Data.Vector as V
 import Debug.Trace (traceStack)
@@ -171,6 +173,28 @@ goDiv rem' den lcInv p degDiff quot
       in goDiv newRem den lcInv p degDiff newQuot
 
 -- | Polynomial modular remainder.
+-- | Compute the Resultant of two polynomials A and B over GF(p).
+-- Uses the Euclidean algorithm approach for fields (since we are in GF(p)).
+-- Res(A, B) = (-1)^(deg A * deg B) * lc(B)^(deg A - deg R) * Res(B, R)
+-- where R = A mod B.
+polyResultant :: Integer -> Poly -> Poly -> Integer
+polyResultant p a b
+  | polyDeg a < polyDeg b = 
+      let sign = if (polyDeg a * polyDeg b) `mod` 2 == 1 then -1 else 1
+      in ((sign * polyResultant p b a) `mod` p + p) `mod` p
+  | polyDeg b == -1 = 0
+  | polyDeg b == 0  = modPow (polyLeadCoeff b) (fromIntegral $ polyDeg a) p
+  | otherwise =
+      let r = polyMod p a b
+          degA = polyDeg a
+          degB = polyDeg b
+          degR = polyDeg r
+          lcB = polyLeadCoeff b
+          sign = if (degA * degB) `mod` 2 == 1 then -1 else 1
+          factor1 = modPow lcB (fromIntegral $ degA - degR) p
+          resBR = polyResultant p b r
+      in (((sign * factor1) `mod` p * resBR) `mod` p + p) `mod` p
+
 polyMod :: Integer -> Poly -> Poly -> Poly
 polyMod p num den = snd (polyDiv p num den)
 
@@ -219,9 +243,13 @@ mkHyperCurve coeffs p
 hyperDiscriminant :: HyperCurve -> Integer
 hyperDiscriminant (HyperCurve coeffs _ p) =
   let f' = polyDeriv p coeffs
-      g = polyExtGCD p coeffs f'
-      (gc, _, _) = g
-  in if polyDeg gc > 0 then 0 else polyLeadCoeff coeffs `mod` p
+      res = polyResultant p coeffs f'
+      n = polyDeg coeffs
+      signOpt = if (n * (n - 1) `div` 2) `mod` 2 /= 0 then -1 else 1
+      a_n = polyLeadCoeff coeffs
+      a_n_inv = if a_n == 0 then 0 else modInv a_n p
+      rawDisc = (res * signOpt * a_n_inv) `mod` p
+  in (rawDisc + p) `mod` p
 
 polyDeriv :: Integer -> Poly -> Poly
 polyDeriv p coeffs

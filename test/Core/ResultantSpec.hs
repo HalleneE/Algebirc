@@ -9,7 +9,7 @@ import Test.QuickCheck
 import qualified Data.Vector as V
 
 import Algebirc.Core.Types
-import Algebirc.Core.Resultant
+import Algebirc.Geometry.HyperellipticCurve (polyResultant)
 
 -- | Explicit 2x2 Sylvester determinant for linear polynomials A and B
 -- A(x) = a1*x + a0

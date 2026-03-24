@@ -83,7 +83,7 @@ analyzeLeakage cfg transforms maybePoly
           schedFindings    = schedulerPredictability cfg
           allFindings      = collapseFindings ++ linearFindings
                           ++ entropyFindings ++ schedFindings
-          score = securityScore transforms allFindings
+          score = securityScore cfg transforms allFindings
       in LeakageReport
            { lrFindings = allFindings
            , lrSecurityScore = score
@@ -263,8 +263,8 @@ schedulerPredictability _cfg =
 
 -- | Compute overall security score based on findings and pipeline structure.
 -- Higher = more secure.
-securityScore :: [Transform] -> [LeakageFinding] -> Int
-securityScore transforms findings =
+securityScore :: ObfuscationConfig -> [Transform] -> [LeakageFinding] -> Int
+securityScore cfg transforms findings =
   let baseScore = 100
       -- Penalty per finding, scaled by severity
       penalties = sum $ map findingPenalty findings
@@ -272,7 +272,9 @@ securityScore transforms findings =
       diversityBonus = pipelineDiversityBonus transforms
       -- Bonus for pipeline depth
       depthBonus = min 15 (length transforms * 2)
-      raw = baseScore - penalties + diversityBonus + depthBonus
+      -- Major bonus for Geometric Security (Richelot + Siegel complex layers)
+      genusBonus = if cfgGenus cfg == 2 then 30 else 0
+      raw = baseScore - penalties + diversityBonus + depthBonus + genusBonus
   in max 0 (min 100 raw)
 
 findingPenalty :: LeakageFinding -> Int

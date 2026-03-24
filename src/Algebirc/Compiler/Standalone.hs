@@ -26,24 +26,13 @@ compileToExecutable od _outputPath = do
   
   putStrLn $ "Building standalone runtime in: " ++ buildDir
 
-  -- 2. Copy dependencies (Core + Obfuscation subset)
-  let modules = 
-        [ "Algebirc/Core/Types.hs"
-        , "Algebirc/Core/FiniteField.hs"
-        , "Algebirc/Core/Polynomial.hs"
-        , "Algebirc/Obfuscation/AST.hs"
-        , "Algebirc/Obfuscation/Encoder.hs"
+  -- 2. Link against the main algebirc library directly
+  currentDir <- getCurrentDirectory
+  let cabalProject = unlines
+        [ "packages: ."
+        , "          " ++ currentDir
         ]
-  
-  forM_ modules $ \modPath -> do
-    let srcPath = "src" </> modPath
-    exists <- doesFileExist srcPath
-    if exists
-      then do
-        let dstPath = buildDir </> modPath
-        createDirectoryIfMissing True (takeDirectory dstPath)
-        copyFile srcPath dstPath
-      else putStrLn $ "WARNING: Source file not found: " ++ srcPath
+  writeFile (buildDir </> "cabal.project") cabalProject
 
   -- 3. Generate Main.hs with full runtime engine
   gen <- newStdGen
@@ -59,13 +48,9 @@ compileToExecutable od _outputPath = do
         , "  main-is: Main.hs"
         , "  hs-source-dirs: ."
         , "  other-modules:"
-        , "    Algebirc.Core.Types"
-        , "    Algebirc.Core.FiniteField"
-        , "    Algebirc.Core.Polynomial"
-        , "    Algebirc.Obfuscation.AST"
-        , "    Algebirc.Obfuscation.Encoder"
         , "  build-depends:"
         , "    base >= 4.17 && < 5,"
+        , "    algebirc,"
         , "    vector,"
         , "    deepseq,"
         , "    cryptonite,"
@@ -130,6 +115,7 @@ generateMainHs od gen = do
     , "import Algebirc.Core.Polynomial"
     , "import Algebirc.Obfuscation.Encoder"
     , "import Algebirc.Obfuscation.AST"
+    , "import Algebirc.Obfuscation.Pipeline"
     , "import qualified Data.Map.Strict as Map"
     , "import Data.List (foldl', intercalate)"
     , "import Data.Char (chr, ord, toUpper)"
@@ -147,6 +133,12 @@ generateMainHs od gen = do
     , ""
     , "runtimeTransformDepth :: Int"
     , "runtimeTransformDepth = " ++ transformInfoStr
+    , ""
+    , "runtimeGenus :: Int"
+    , "runtimeGenus = " ++ show (cfgGenus cfg)
+    , ""
+    , "runtimeSeed :: Integer"
+    , "runtimeSeed = " ++ show (cfgSeed cfg)
     , ""
     -- Metamorphic Data
     , "obfuscatedBlocks :: [(Int, BoundedPoly)]"
@@ -318,12 +310,15 @@ runtimeEngineCode =
   , "                           Just s  -> s"
   , "                           Nothing -> polyMaxDeg poly + 1"
   , "          putStrLn $ \"  Original Size  : \" ++ show origSize ++ \" bytes\""
+  , "          let cfg = defaultConfig { cfgFieldPrime = runtimePrime, cfgMaxDegree = runtimeMaxDeg, cfgGenus = runtimeGenus, cfgSeed = runtimeSeed }"
+  , "          let pl = case buildPipeline cfg of { Right p -> p ; Left _ -> error \"Pipeline build failed\" }"
+  , "          let Right origPoly = invertPipelinePoly cfg pl poly"
   , "          putStrLn $ sep \"COEFFICIENT EXTRACTION\""
-  , "          let bytes = extractBytes poly origSize"
+  , "          let bytes = extractBytes origPoly origSize"
   , "          putStrLn $ \"  Raw Coefficients: \" ++ show (take 32 bytes)"
   , "          putStrLn $ \"  Hex Dump        : \" ++ hexDump (take 32 bytes)"
   , "          putStrLn $ sep \"DECODED DATA\""
-  , "          let decoded = decodePoly poly origSize"
+  , "          let decoded = decodePoly origPoly origSize"
   , "          putStrLn $ \"  Decoded String : \" ++ show decoded"
   , "          putStrLn $ \"  Length         : \" ++ show (length decoded) ++ \" chars\""
   , "          putStrLn   \"  Status         : SUCCESS\""

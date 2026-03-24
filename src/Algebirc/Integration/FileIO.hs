@@ -35,6 +35,7 @@ import Algebirc.Integration.HaskellParser
 import Algebirc.Core.Group (generateFromSeed)
 import Data.Either (fromRight)
 import Control.Monad (foldM)
+import Data.List (isPrefixOf)
 
 -- ============================================================
 -- Types
@@ -101,12 +102,12 @@ deobfuscateFile :: ObfuscationConfig
                -> FilePath        -- ^ Input meta file (.algebirc.meta)
                -> FilePath        -- ^ Output .hs file (recovered)
                -> IO (Either String String)
-deobfuscateFile cfg metaPath outputPath = do
+deobfuscateFile _cfg metaPath outputPath = do
   metaContent <- readFile metaPath
   case deserializeMetadata metaContent of
     Left err -> return $ Left $ "Metadata error: " ++ err
-    Right (origSrc, transforms) ->
-      case deobfuscateData cfg origSrc transforms of
+    Right (cfg, blocks) ->
+      case deobfuscateData cfg blocks of
         Left err -> return $ Left $ "Deobfuscation error: " ++ show err
         Right recovered -> do
           writeFile outputPath recovered
@@ -138,24 +139,15 @@ obfuscateSource cfg origSrc sourceMod =
                , odModule     = sourceMod
                }
 
--- | Deobfuscate data kembali ke source string.
-deobfuscateData :: ObfuscationConfig
-               -> String          -- ^ Original source (untuk metadata)
-               -> [Transform]     -- ^ Transforms yang dipakai
-               -> Either AlgebircError String
-deobfuscateData cfg origSrc transforms =
-  -- Untuk sekarang: simpan dan restore original source
-  -- Full deobfuscation: decode blocks → reconstruct AST → generate Haskell
-  case parseHaskellSource origSrc of
-    Left err -> Left (GenericError $ "Parse error on stored source: " ++ err)
-    Right pr ->
-      let sourceMod = prModule pr
-          declExprs = moduleToDeclExprs sourceMod
-      in case mapM (encodeAndDeobfuscate cfg transforms) declExprs of
-           Left err -> Left err
-           Right _decodedExprs ->
-             -- Reconstruct menggunakan source asli yang sudah diverifikasi
-             Right origSrc
+-- | Deobfuscate data recovered from encoded blocks strings.
+deobfuscateData :: ObfuscationConfig -> [EncodedBlock] -> Either AlgebircError String
+deobfuscateData cfg blocks = do
+  pl <- buildPipeline cfg
+  let decodeOne block = do
+        origPoly <- invertPipelinePoly cfg pl (ebPoly block)
+        return $ decodeExpr cfg (block { ebPoly = origPoly })
+  decodedStrings <- mapM decodeOne blocks
+  return $ unlines decodedStrings
 
 -- | Encode satu expresi dan obfuscate.
 encodeAndObfuscate :: ObfuscationConfig
@@ -170,40 +162,7 @@ encodeAndObfuscate cfg pl expr =
         Left err -> Left err
         Right obfPoly -> Right (block, block { ebPoly = obfPoly })
 
--- | Unified application (handles both linear and nonlinear transforms).
-obfuscateBlockUnified :: ObfuscationConfig -> [Transform] -> EncodedBlock -> Either AlgebircError EncodedBlock
-obfuscateBlockUnified cfg transforms block = do
-  poly' <- applyPipelineUnified cfg transforms (ebPoly block)
-  return block { ebPoly = poly' }
-
-applyPipelineUnified :: ObfuscationConfig -> [Transform] -> BoundedPoly -> Either AlgebircError BoundedPoly
-applyPipelineUnified cfg ts p = foldM (\acc t -> applyUnified cfg t acc) p ts
-
-applyUnified :: ObfuscationConfig -> Transform -> BoundedPoly -> Either AlgebircError BoundedPoly
-applyUnified cfg t poly = case transformTag t of
-  SBoxTransform         -> applyNonlinear cfg t poly
-  FeistelTransform      -> applyNonlinear cfg t poly
-  PowerMapTransform     -> applyNonlinear cfg t poly
-  ARXDiffusionTransform -> applyNonlinear cfg t poly
-  _                     -> applyTransform cfg t poly
-
--- | Deobfuscate dan decode kembali.
-encodeAndDeobfuscate :: ObfuscationConfig
-                    -> [Transform]
-                    -> SourceExpr
-                    -> Either AlgebircError String
-encodeAndDeobfuscate cfg transforms expr =
-  case encodeExpr cfg expr of
-    Left err -> Left err
-    Right block ->
-      case obfuscateBlockUnified cfg transforms block of
-        Left err -> Left err
-        Right obfBlock ->
-          -- Deobfuscation is harder because we need inverse unification too
-          -- For now just use original block to verify encode/decode logic
-          -- (Full deobfuscation requires invertUnified which mirrors applyUnified)
-          -- Since we disabled deobfuscate command effectively, this is placeholder
-          Right (decodeExpr cfg block)
+-- removed redundant unified handlers from FileIO, use Pipeline layers.
 
 -- ============================================================
 -- Default Pipeline
@@ -262,17 +221,14 @@ formatObfuscatedData blocks = unlines $ map fmtBlock blocks
 
 
 -- | Deserialize metadata.
-deserializeMetadata :: String -> Either String (String, [Transform])
+deserializeMetadata :: String -> Either String (ObfuscationConfig, [EncodedBlock])
 deserializeMetadata content =
   let ls = lines content
   in case break (== "---BEGIN OBFUSCATED BLOCKS---") ls of
        (headerLines, _marker:rest) ->
          case break (== "---END OBFUSCATED BLOCKS---") rest of
            (blockLines, _endMark:_) ->
-             let -- For now, we don't reconstruct from blocks in this demo
-                 -- Just use a placeholder since we changed format
-                 src = ""
-                 seed = extractSeed headerLines
+             let seed = extractSeed headerLines
                  prime = extractPrime headerLines
                  maxDeg = extractMaxDeg headerLines
                  genus = extractGenus headerLines
@@ -282,14 +238,20 @@ deserializeMetadata content =
                          , cfgSeed       = seed
                          , cfgGenus      = genus
                          }
-                 transforms = case buildPipeline cfg of
-                                Right pl -> plAlgTransforms pl
-                                Left _   -> []
-             in Right (src, transforms)
-           _ -> Left "Missing ---END SOURCE--- marker"
-       _ -> Left $ "Missing ---BEGIN SOURCE--- marker. " ++ show beginMark
-  where
-    beginMark = "---BEGIN SOURCE---" :: String
+                 blocks = parseBlocks prime maxDeg blockLines
+             in Right (cfg, blocks)
+           _ -> Left "Missing ---END OBFUSCATED BLOCKS--- marker"
+       _ -> Left "Missing ---BEGIN OBFUSCATED BLOCKS--- marker"
+
+parseBlocks :: Integer -> Int -> [String] -> [EncodedBlock]
+parseBlocks prime maxDeg ls =
+  [ let (idStr, rest) = break (== ':') (drop 6 l)
+        bid = read idStr :: Int
+        coeffs = read (drop 2 rest) :: [Integer]
+        terms = zipWith (\i c -> Term c i) [0..] coeffs
+        poly = mkBoundedPoly prime maxDeg terms
+    in EncodedBlock poly (maxDeg+1) bid
+  | l <- ls, "BLOCK " `isPrefixOf` l ]
 
 extractSeed :: [String] -> Integer
 extractSeed = extractNum "-- Seed: " 42
