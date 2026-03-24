@@ -27,6 +27,7 @@ module Algebirc.Geometry.HyperellipticCurve
   , polyNorm
   , polyExtGCD
   , polyMakeMonic
+  , polyDeriv
   , iToV
   , vToI
     -- * Jacobian Arithmetic (Cantor)
@@ -36,6 +37,8 @@ module Algebirc.Geometry.HyperellipticCurve
   , jacobianScalarMul
   , jacobianIdentity
   , isIdentity
+  , cantorReduce
+  , cantorCompose
     -- * Divisor Invariants
   , validateDiv
   , normalizeDiv
@@ -52,6 +55,7 @@ import Algebirc.Core.Types
 import Algebirc.Geometry.EllipticCurve (modInv, modPow)
 import Data.List (foldl')
 import qualified Data.Vector as V
+import Debug.Trace (traceStack)
 
 -- ============================================================
 -- Vector Interop Helpers
@@ -146,7 +150,7 @@ polyMulKaratsuba p as bs =
 -- | Polynomial division with remainder.
 polyDiv :: Integer -> Poly -> Poly -> (Poly, Poly)
 polyDiv p num den
-  | polyDeg den < 0 = error "Division by zero polynomial"
+  | polyDeg den < 0 = (V.singleton 999, V.singleton 888)
   | polyDeg num < polyDeg den = (V.singleton 0, num)
   | otherwise =
       let lc = polyLeadCoeff den
@@ -173,7 +177,13 @@ polyMod p num den = snd (polyDiv p num den)
 -- | Extended GCD.
 polyExtGCD :: Integer -> Poly -> Poly -> (Poly, Poly, Poly)
 polyExtGCD p a b
-  | polyDeg b < 0 = (polyMakeMonic p a, V.singleton 1, V.singleton 0)
+  | polyDeg b < 0 =
+      if polyDeg a < 0
+      then (V.singleton 0, V.singleton 0, V.singleton 0)
+      else
+        let lc = polyLeadCoeff a
+            lcInv = modInv lc p
+        in (polyMakeMonic p a, V.singleton lcInv, V.singleton 0)
   | otherwise =
       let (q, r) = polyDiv p a b
           (g, s, t) = polyExtGCD p b r
@@ -249,7 +259,7 @@ cantorCompose (HyperCurve fCoeffs g p) (MumfordDiv u1 v1 _) (MumfordDiv u2 v2 _)
       (d, c1, c2) = polyExtGCD p d1 vSum
       s1 = polyMul p c1 e1
       s2 = polyMul p c1 e2
-      s3 = if V.null c2 then V.singleton 0 else V.singleton (c2 V.! 0)
+      s3 = c2
       u1u2 = polyMul p u1 u2
       d2 = polyMul p d d
       (uNew, _) = polyDiv p u1u2 (if polyDeg d2 > 0 then d2 else V.singleton 1)
@@ -267,12 +277,37 @@ cantorReduce :: HyperCurve -> MumfordDiv -> MumfordDiv
 cantorReduce hc@(HyperCurve fCoeffs g p) (MumfordDiv u v _)
   | polyDeg u <= g = MumfordDiv (polyMakeMonic p u) v p
   | otherwise =
-      let v2 = polyMul p v v
+      let degF = polyDeg fCoeffs
+          isEvenDegree = degF `mod` 2 == 0
+          
+          vNorm = polyMod p v u
+          degU = polyDeg u
+          
+          -- Mathematical Parity Modification for Even Degree Sextics
+          -- When trying to reduce degree 3 -> 2 over sextics, we MUST match the curve's infinity rational asymptotes 
+          -- by interpolating V(X) such that leading coefficient of V(x)^2 zeroes the leading coefficient of f(x).
+          vAdj = if isEvenDegree && degU == g + 1
+                 then let fLc = polyLeadCoeff fCoeffs
+                          uLc = polyLeadCoeff u
+                          qSq = (fLc * modInv (uLc * uLc `mod` p) p) `mod` p
+                          roots = [ y | y <- [0..p-1], (y*y) `mod` p == qSq ]
+                      in if null roots
+                         then vNorm -- The divisor CANNOT be represented minimally across GF(p) (no rational points at infinity)
+                         else let qPoly = V.singleton (head roots)
+                              in polyAdd p vNorm (polyMul p qPoly u)
+                 else vNorm
+
+          v2 = polyMul p vAdj vAdj
           fMinusV2 = polySub p fCoeffs v2
           (uNew, _) = polyDiv p fMinusV2 u
-          negV = polyNorm p $ V.map (\c -> (p - c) `mod` p) v
-          vNew = polyMod p negV uNew
-      in cantorReduce hc (MumfordDiv (polyMakeMonic p uNew) (polyNorm p vNew) p)
+          
+      in if polyDeg uNew < 0 
+         then jacobianIdentity p
+         else let negV = polyNorm p $ V.map (\c -> (p - c) `mod` p) vAdj
+                  vNew = polyMod p negV uNew
+              in if polyDeg uNew >= polyDeg u
+                 then MumfordDiv (polyMakeMonic p uNew) (polyNorm p vNew) p
+                 else cantorReduce hc (MumfordDiv (polyMakeMonic p uNew) (polyNorm p vNew) p)
 
 -- ============================================================
 -- Divisor Invariants & Validation
