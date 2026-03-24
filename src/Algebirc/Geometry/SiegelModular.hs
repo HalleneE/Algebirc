@@ -32,6 +32,7 @@ module Algebirc.Geometry.SiegelModular
 import Algebirc.Core.Types
 import Algebirc.Geometry.EllipticCurve (modInv, modPow)
 import Algebirc.Geometry.HyperellipticCurve (igusaInvariants, polyEval)
+import Data.Bits
 import Data.List (foldl')
 
 -- ============================================================
@@ -141,22 +142,38 @@ siegelMixingConstants p j0 ell nSteps =
 -- ============================================================
 
 -- | Mix coefficients using Siegel modular walk constants.
--- Each coefficient c_i gets XOR-folded with the walk constants:
---   c'_i = (c_i + walkConst_i + walkConst_{i+1} * walkConst_{i+2}) mod p
+-- Each coefficient c_i is transformed via multiplicative-affine map:
+--
+--   c'_i = (c_i * k₁ + k₂) mod p
+--
+-- where k₁ = (walkConst_i .|. 1) — forced odd to guarantee gcd(k₁, p) = 1
+-- (p is an odd prime, so any odd number coprime to p has a modular inverse).
+-- This is nonlinear in the key: recovering c_i requires k₁⁻¹ mod p.
 siegelMix :: Integer -> IgusaInvariants -> Int -> Int -> [Integer] -> [Integer]
 siegelMix p j0 ell nSteps coeffs =
   let constants = siegelMixingConstants p j0 ell (nSteps + length coeffs `div` 4)
-      -- Ensure we have enough constants
-      constStream = cycle (if null constants then [1] else constants)
-  in zipWith3 (\c k1 k2 ->
-    (c + k1 + k1 * k2) `mod` p
+      constStream = cycle (if null constants then [1, 0] else constants)
+      -- Any non-zero value mod p is coprime since p is a prime.
+      forceCoprime k = let k' = k `mod` p
+                       in if k' == 0 then 1 else k'
+  in zipWith3 (\c k1raw k2 ->
+    let k1 = forceCoprime k1raw
+    in (c * k1 + k2) `mod` p
     ) coeffs constStream (drop 1 constStream)
 
--- | Unmix coefficients (inverse of siegelMix).
+-- | Unmix coefficients — exact inverse of 'siegelMix'.
+-- Inverse of c'_i = (c_i * k₁ + k₂) mod p:
+--   c_i = (c'_i - k₂) * modInv(k₁, p) mod p
 siegelUnmix :: Integer -> IgusaInvariants -> Int -> Int -> [Integer] -> [Integer]
 siegelUnmix p j0 ell nSteps coeffs =
   let constants = siegelMixingConstants p j0 ell (nSteps + length coeffs `div` 4)
-      constStream = cycle (if null constants then [1] else constants)
-  in zipWith3 (\c k1 k2 ->
-    ((c - k1 - k1 * k2) `mod` p + p) `mod` p
+      constStream = cycle (if null constants then [1, 0] else constants)
+      forceCoprime k = let k' = k `mod` p
+                       in if k' == 0 then 1 else k'
+  in zipWith3 (\c k1raw k2 ->
+    let k1     = forceCoprime k1raw
+        k1inv  = modInv k1 p
+        -- ((c - k2) mod p + p) mod p ensures non-negative before multiplying
+        cShift = ((c - k2) `mod` p + p) `mod` p
+    in (cShift * k1inv) `mod` p
     ) coeffs constStream (drop 1 constStream)

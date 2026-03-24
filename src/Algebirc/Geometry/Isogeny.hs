@@ -14,8 +14,11 @@
 -- This is the algebraic geometry analog of "one-way function with trapdoor."
 
 module Algebirc.Geometry.Isogeny
-  ( -- * Vélu's Formulas
-    veluIsogeny
+  ( -- * Mixing
+    isogenyMix
+  , isogenyUnmix
+    -- * Vélu's Formulas
+  , veluIsogeny
   , veluMapPoint
     -- * Isogeny Walks
   , isogenyWalk
@@ -40,91 +43,46 @@ import Data.List (foldl')
 
 -- | Vélu's isogeny: given curve E and kernel point P of exact order ℓ,
 -- compute the codomain curve E' = E/⟨P⟩.
---
--- Uses the standard Vélu formulas (Washington, Prop 12.16, but properly 
--- translated from Vélu 1971) for a short Weierstrass curve y²=x³+ax+b:
---
---   For each Q=(xQ,yQ) in the half-kernel K* = {P, 2P, …, ((ℓ-1)/2)·P}:
---     vQ = 3·xQ² + a           ← g_x(Q) = d/dx(x³+ax+b)
---     uQ = 2·yQ²               ← Vélu literal: 2y² (literature often cites 4y² 
---                                as the *paired* sum, creating confusion)
---     wQ = uQ + xQ·vQ
---
---   Since v_{-Q}=v_Q and w_{-Q}=w_Q, summing over full kernel K\{O}
---   just doubles each half-kernel term:
---     S = Σ_{K\{O}} vQ  =  2 · Σ_{K*} vQ
---     W = Σ_{K\{O}} wQ  =  2 · Σ_{K*} wQ
---
---   Codomain coefficients:
---     a' = a - 5·S  (mod p)
---     b' = b - 7·W  (mod p)   ← k=7 is the algebraically correct constant
---
--- Returns E': y² = x³ + a'x + b' (short Weierstrass form).
---
--- Note on previous bug: an earlier version used t_Q = 6x²+2a (= 2·g_x,
--- doubled) and u_Q = 4y²+4b (extra +4b term). These compounding errors
--- required a fudge factor of k=44 that only coincidentally preserved the
--- curve order for the specific curve y²=x³+3x+7 over GF(257). The error
--- was detected by cross-curve testing on y²=x³+5x+3 where k=44 failed.
 veluIsogeny :: EllipticCurve -> ECPoint -> Int -> EllipticCurve
 veluIsogeny ec Infinity _ = ec  -- trivial isogeny
 veluIsogeny ec@(EllipticCurve a b p) kernelPt ell =
-  let -- Half-kernel K* = {P, 2P, …, ((ℓ-1)/2)·P}
-      -- Each element represents a {Q, -Q} pair in the full kernel K\{O}.
-      halfPts = [ ecScalarMul ec (fromIntegral k) kernelPt
+  let halfPts = [ ecScalarMul ec (fromIntegral k) kernelPt
                 | k <- [1 .. (ell - 1) `div` 2] ]
-
-      -- Vélu sums over the half-kernel (factor 2 accounts for {Q,-Q} pairs).
       (vSum, wSum) = foldl' (\(vacc, wacc) q ->
         case q of
           Infinity  -> (vacc, wacc)
           ECPoint qx qy ->
             let xQ2 = (qx * qx) `mod` p
-                -- Exact Vélu 1971 formulas for point Q:
-                vQ  = (3 * xQ2 + a)    `mod` p   -- t_Q = 3x²+a
-                uQ  = (2 * qy * qy)    `mod` p   -- u_Q = 2y² (NOT 4y²)!
+                vQ  = (3 * xQ2 + a)    `mod` p
+                uQ  = (2 * qy * qy)    `mod` p
                 wQ  = (uQ + qx * vQ)   `mod` p
-                -- When summing over K\{O}, the pair {Q, -Q} contributes 2*vQ and 2*wQ.
-                -- Note: 2*wQ expands to 2(2y² + x(3x²+a)) = 4y² + 2x(vQ), which matches
-                -- the simplified "4y²" sum found in some literature.
             in ((vacc + 2 * vQ) `mod` p, (wacc + 2 * wQ) `mod` p)
         ) (0, 0) halfPts
-
-      -- Codomain coefficients — Washington Prop 12.16:
-      --   a' = a - 5·S
-      --   b' = b - 7·W
-      -- k=5 and k=7 are algebraically correct for all ℓ-isogenies.
       a' = ((a - 5 * vSum) `mod` p + p) `mod` p
       b' = ((b - 7 * wSum) `mod` p + p) `mod` p
-
   in EllipticCurve a' b' p
 
 -- | Map a point through the Vélu isogeny.
--- φ(P) computes the image of P under the isogeny defined by the kernel.
 veluMapPoint :: EllipticCurve -> ECPoint -> [ECPoint] -> ECPoint -> ECPoint
 veluMapPoint _ _ _ Infinity = Infinity
 veluMapPoint ec@(EllipticCurve _ _ p) kernelPt kernelPts (ECPoint px py) =
-  let -- For each kernel point Q (non-identity), compute contribution
-      (xShift, yShift) = foldl' (\(xacc, yacc) q ->
+  let (xShift, yShift) = foldl' (\(xacc, yacc) q ->
         case q of
           Infinity -> (xacc, yacc)
           ECPoint qx qy ->
             let dx = (px - qx + p) `mod` p
             in if dx == 0
-               then (xacc, yacc)  -- P is in the kernel
+               then (xacc, yacc)
                else
                  let dxInv = modInv dx p
                      gxQ = (3 * qx * qx + ecA ec) `mod` p
                      gyQ = ((-2) * qy + p) `mod` p
-                     -- x contribution
                      xc = (gxQ * dxInv) `mod` p
-                     -- y contribution  
                      dy = (py - qy + p) `mod` p
                      yc = (gxQ * dy * dxInv `mod` p * dxInv `mod` p
                            - gyQ * dxInv) `mod` p
                  in ((xacc + xc) `mod` p, (yacc + yc) `mod` p)
         ) (0, 0) kernelPts
-      
       x' = (px + xShift) `mod` p
       y' = (py + yShift) `mod` p
   in ECPoint ((x' + p) `mod` p) ((y' + p) `mod` p)
@@ -133,58 +91,38 @@ veluMapPoint ec@(EllipticCurve _ _ p) kernelPt kernelPts (ECPoint px py) =
 -- Kernel Point Generation
 -- ============================================================
 
--- | Find a point of exact order ℓ on the curve.
---
--- Uses cofactor multiplication with retry:
---   1. Lift seed to a point P on E
---   2. Compute Q = [n/ℓ]·P (cofactor clearing)
---   3. Verify: Q ≠ O  AND  [ℓ]Q = O  (exact order ℓ)
---   4. If Q = O (degenerate), retry with seed+1
---
--- Guard: if ℓ does not divide #E(GF(p)), no ℓ-torsion point exists.
--- In this case, returns Infinity (veluIsogeny treats this as identity).
---
--- Max retries: p attempts to avoid infinite loops.
 findKernelPoint :: EllipticCurve -> Integer -> Integer -> ECPoint
 findKernelPoint ec ell seed
-  | n `mod` ell /= 0 = Infinity  -- ℓ ∤ #E → no ℓ-torsion exists
-  | cofactor == 0     = Infinity  -- degenerate
+  | n `mod` ell /= 0 = Infinity
+  | cofactor == 0     = Infinity
   | otherwise         = tryFind seed (fromIntegral p)
   where
     p        = ecPrime ec
     n        = curveOrder ec
     cofactor = n `div` ell
-
-    tryFind _ 0 = Infinity  -- exhausted retries
+    tryFind _ 0 = Infinity
     tryFind s remaining =
       let basePt   = liftToPoint ec (s `mod` p)
           cofPt    = ecScalarMul ec cofactor basePt
-          -- Verify exact order: cofPt ≠ O and [ℓ]cofPt = O
           isNonTrivial = cofPt /= Infinity
           killsAtEll   = ecScalarMul ec ell cofPt == Infinity
       in if isNonTrivial && killsAtEll
-         then cofPt                          -- exact order ℓ confirmed ✓
+         then cofPt
          else tryFind (s + 1) (remaining - 1)
 
--- | Deterministic kernel point from seed value.
 randomKernelPoint :: EllipticCurve -> Integer -> ECPoint
 randomKernelPoint ec seed = liftToPoint ec seed
 
 -- ============================================================
--- Isogeny Walk
+-- Isogeny Walks
 -- ============================================================
 
--- | Multi-step isogeny walk: E₀ →ℓ₁ E₁ →ℓ₂ E₂ → ... → Eₖ.
--- Each step uses a deterministic kernel derived from the seed.
---
--- Returns the final curve after the walk.
 isogenyWalk :: EllipticCurve -> [(Integer, Int)] -> EllipticCurve
 isogenyWalk = foldl' (\ec (seed, ell) ->
   let kernel = findKernelPoint ec (fromIntegral ell) seed
   in veluIsogeny ec kernel ell
   )
 
--- | Walk and collect all intermediate curves (for analysis/debugging).
 walkCurves :: EllipticCurve -> [(Integer, Int)] -> [EllipticCurve]
 walkCurves ec0 steps = scanl (\ec (seed, ell) ->
   let kernel = findKernelPoint ec (fromIntegral ell) seed
@@ -192,67 +130,55 @@ walkCurves ec0 steps = scanl (\ec (seed, ell) ->
   ) ec0 steps
 
 -- ============================================================
+-- Mixing
+-- ============================================================
+
+-- | Mix coefficients via isogeny walk invariants.
+isogenyMix :: EllipticCurve -> [(Integer, Int)] -> [Integer] -> [Integer]
+isogenyMix ec0 steps coeffs =
+  let p = ecPrime ec0
+      curves = walkCurves ec0 steps
+      jInvariants = map jInvariant curves
+      constStream = cycle (if null jInvariants then [1] else jInvariants)
+  in zipWith (\c j -> (c + j) `mod` p) coeffs constStream
+
+-- | Unmix coefficients (inverse of isogenyMix).
+isogenyUnmix :: EllipticCurve -> [(Integer, Int)] -> [Integer] -> [Integer]
+isogenyUnmix ec0 steps coeffs =
+  let p = ecPrime ec0
+      curves = walkCurves ec0 steps
+      jInvariants = map jInvariant curves
+      constStream = cycle (if null jInvariants then [1] else jInvariants)
+  in zipWith (\c j -> ((c - j) `mod` p + p) `mod` p) coeffs constStream
+
+-- ============================================================
 -- Coefficient Transport
 -- ============================================================
 
--- | Transport polynomial coefficients through an isogeny chain.
---
--- Strategy:
--- 1. Lift each coefficient to a point on E₀
--- 2. Walk the isogeny chain: φₖ ∘ ... ∘ φ₁(P), using the correct
---    intermediate curve Eᵢ as the domain for each step i
--- 3. Project back to field elements (x-coordinates)
---
--- The result is algebraically bound to the isogeny path —
--- reversing requires knowing the kernel points.
---
--- Fix: each fold step uses the curve produced by the *previous* step
--- (carried as `curEc`), not the original `ec0`. This ensures
--- φᵢ: Eᵢ₋₁ → Eᵢ is applied in the correct domain.
 transportCoeffs :: EllipticCurve -> [(Integer, Int)] -> [Integer] -> [Integer]
 transportCoeffs ec0 steps coeffs =
   let p = ecPrime ec0
-
-      -- walkCurves yields [E₀, E₁, E₂, …, Eₙ].
-      -- We zip domain curves (E₀..Eₙ₋₁) with the step that produces the next.
-      curves = walkCurves ec0 steps                -- length = |steps| + 1
-      domainCurves = zip curves steps              -- (Eᵢ, stepᵢ) pairs
-
-      -- Pre-compute (kernel, kernel-point-list) for each step,
-      -- using the correct domain curve Eᵢ.
+      curves = walkCurves ec0 steps
+      domainCurves = zip curves steps
       kernelData = map (\(ec, (seed, ell)) ->
           let kernel = findKernelPoint ec (fromIntegral ell) seed
               kPts   = [ ecScalarMul ec (fromIntegral k) kernel
                        | k <- [1 .. ell - 1] ]
           in (ec, kernel, kPts)
         ) domainCurves
-
-      -- Lift coefficients to points on E₀.
       points = map (liftToPoint ec0 . (`mod` p)) coeffs
-
-      -- Walk each point through the chain, threading current curve.
-      -- State: (curPt, curEc) — curEc is the domain of the *next* step.
       transported = map (\pt0 ->
         let (finalPt, _) =
               foldl' (\(curPt, _curEc) (stepEc, kernel, kPts) ->
                 let nextPt = case curPt of
                                Infinity -> Infinity
                                _        -> veluMapPoint stepEc kernel kPts curPt
-                    -- Codomain is already tracked by `curves`; we only
-                    -- need the domain curve for veluMapPoint, which is stepEc.
                 in (nextPt, stepEc)
               ) (pt0, ec0) kernelData
         in finalPt
         ) points
-
   in map projectFromPoint transported
 
--- | Inverse transport (requires dual isogeny data).
--- For obfuscation, the forward path is stored; true inversion requires
--- knowing the kernel points (secret).
---
--- Fix: start from the *actual* final curve Eₙ produced by the forward walk,
--- then walk reversed steps from Eₙ back toward E₀.
 inverseTransportCoeffs :: EllipticCurve -> [(Integer, Int)] -> [Integer] -> [Integer]
 inverseTransportCoeffs ec steps coeffs =
   let finalCurve = isogenyWalk ec steps
@@ -263,16 +189,5 @@ inverseTransportCoeffs ec steps coeffs =
 -- Dual Isogeny
 -- ============================================================
 
--- | Compute the dual isogeny's codomain (which is the original curve).
--- The dual φ̂: E' → E satisfies φ̂ ∘ φ = [ℓ] on E.
--- For coefficient-level operations, this means:
---   decode(x) = [ℓ⁻¹] · φ̂(lift(x))
 dualIsogenyCurve :: EllipticCurve -> ECPoint -> Int -> EllipticCurve
-dualIsogenyCurve ec kernel ell =
-  -- The dual of φ: E → E' has codomain E
-  -- and domain E' = veluIsogeny ec kernel ell
-  -- Computing full dual requires the dual kernel on E'
-  let codomain = veluIsogeny ec kernel ell
-      -- The dual kernel is the image of E[ℓ] - ⟨P⟩ under φ
-      -- For practical purposes, we return the codomain
-  in codomain
+dualIsogenyCurve ec kernel ell = veluIsogeny ec kernel ell

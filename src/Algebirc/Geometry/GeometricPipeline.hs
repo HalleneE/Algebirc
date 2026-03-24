@@ -122,12 +122,12 @@ geometricDecode cfg coeffs =
 stageIsogeny :: GeometryConfig -> [Integer] -> [Integer]
 stageIsogeny cfg coeffs =
   let ec = EllipticCurve (gcEcA cfg) (gcEcB cfg) (gcPrime cfg)
-  in transportCoeffs ec (gcIsogenySteps cfg) coeffs
+  in isogenyMix ec (gcIsogenySteps cfg) coeffs
 
 stageIsogenyInv :: GeometryConfig -> [Integer] -> [Integer]
 stageIsogenyInv cfg coeffs =
   let ec = EllipticCurve (gcEcA cfg) (gcEcB cfg) (gcPrime cfg)
-  in inverseTransportCoeffs ec (gcIsogenySteps cfg) coeffs
+  in isogenyUnmix ec (gcIsogenySteps cfg) coeffs
 
 -- | Stage 2: Permute via CM group action on j-invariants.
 stageCMAction :: GeometryConfig -> [Integer] -> [Integer]

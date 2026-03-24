@@ -30,12 +30,15 @@ library
     Algebirc.Core.FiniteField
     Algebirc.Core.Polynomial
     Algebirc.Core.Group
+    Algebirc.Core.Resultant
+    Algebirc.Core.Matrix
     Algebirc.Evaluator.Eval
     Algebirc.Obfuscation.AST
     Algebirc.Obfuscation.Encoder
     Algebirc.Obfuscation.Transform
     Algebirc.Obfuscation.NonlinearTransform
     Algebirc.Obfuscation.DegreeControl
+    Algebirc.Obfuscation.Pipeline
     Algebirc.Ordering.Fingerprint
     Algebirc.Ordering.MathOrder
     Algebirc.Ordering.Scheduler
@@ -101,12 +104,15 @@ test-suite algebirc-test
   other-modules:
     Core.FiniteFieldSpec
     Core.PolynomialSpec
+    Core.ResultantSpec
+    Core.MatrixSpec
     StressSpec
     AnalysisSpec
     IntegrationSpec
     NonlinearSpec
     PropertySpec
     RichelotSpec
+    PipelineSpec
   build-depends:
     base             >= 4.17 && < 5,
     algebirc,

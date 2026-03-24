@@ -29,6 +29,8 @@ import Algebirc.Obfuscation.AST
 import Algebirc.Obfuscation.Encoder
 import Algebirc.Obfuscation.Transform
 import Algebirc.Obfuscation.NonlinearTransform (generatePipeline, applyNonlinear)
+import Algebirc.Obfuscation.Pipeline
+  ( ObfuscationPipeline(..), buildPipeline, runPipelinePoly, invertPipelinePoly, plAlgTransforms )
 import Algebirc.Integration.HaskellParser
 import Algebirc.Core.Group (generateFromSeed)
 import Data.Either (fromRight)
@@ -120,20 +122,21 @@ obfuscateSource :: ObfuscationConfig
                -> SourceModule     -- ^ Parsed module
                -> Either AlgebircError ObfuscationData
 obfuscateSource cfg origSrc sourceMod =
-  let -- Default transform pipeline berdasarkan seed
-      transforms = defaultPipeline cfg
-      -- Encode setiap deklarasi
-      declExprs = moduleToDeclExprs sourceMod
-  in case mapM (encodeAndObfuscate cfg transforms) declExprs of
-       Left err -> Left err
-       Right blockPairs ->
-         Right ObfuscationData
-           { odBlocks     = blockPairs
-           , odTransforms = transforms
-           , odConfig     = cfg
-           , odOrigSrc    = origSrc
-           , odModule     = sourceMod
-           }
+  case buildPipeline cfg of
+    Left err -> Left err
+    Right pl ->
+      let transforms  = plAlgTransforms pl
+          declExprs   = moduleToDeclExprs sourceMod
+      in case mapM (encodeAndObfuscate cfg pl) declExprs of
+           Left err -> Left err
+           Right blockPairs ->
+             Right ObfuscationData
+               { odBlocks     = blockPairs
+               , odTransforms = transforms
+               , odConfig     = cfg
+               , odOrigSrc    = origSrc
+               , odModule     = sourceMod
+               }
 
 -- | Deobfuscate data kembali ke source string.
 deobfuscateData :: ObfuscationConfig
@@ -156,16 +159,16 @@ deobfuscateData cfg origSrc transforms =
 
 -- | Encode satu expresi dan obfuscate.
 encodeAndObfuscate :: ObfuscationConfig
-                  -> [Transform]
+                  -> ObfuscationPipeline
                   -> SourceExpr
                   -> Either AlgebircError (EncodedBlock, EncodedBlock)
-encodeAndObfuscate cfg transforms expr =
+encodeAndObfuscate cfg pl expr =
   case encodeExpr cfg expr of
     Left err -> Left err
     Right block ->
-      case obfuscateBlockUnified cfg transforms block of
+      case runPipelinePoly cfg pl (ebPoly block) of
         Left err -> Left err
-        Right obfBlock -> Right (block, obfBlock)
+        Right obfPoly -> Right (block, block { ebPoly = obfPoly })
 
 -- | Unified application (handles both linear and nonlinear transforms).
 obfuscateBlockUnified :: ObfuscationConfig -> [Transform] -> EncodedBlock -> Either AlgebircError EncodedBlock
@@ -241,6 +244,7 @@ serializeMetadata od =
     , "-- Field Prime: " ++ show (cfgFieldPrime (odConfig od))
     , "-- Max Degree: " ++ show (cfgMaxDegree (odConfig od))
     , "-- Seed: " ++ show (cfgSeed (odConfig od))
+    , "-- Genus: " ++ show (cfgGenus (odConfig od))
     , "-- Transform Count: " ++ show (length (odTransforms od))
     , "-- Block Count: " ++ show (length (odBlocks od))
     , "---BEGIN OBFUSCATED BLOCKS---"
@@ -267,16 +271,20 @@ deserializeMetadata content =
            (blockLines, _endMark:_) ->
              let -- For now, we don't reconstruct from blocks in this demo
                  -- Just use a placeholder since we changed format
-                 src = "" 
+                 src = ""
                  seed = extractSeed headerLines
                  prime = extractPrime headerLines
                  maxDeg = extractMaxDeg headerLines
+                 genus = extractGenus headerLines
                  cfg = defaultConfig
                          { cfgFieldPrime = prime
                          , cfgMaxDegree  = maxDeg
                          , cfgSeed       = seed
+                         , cfgGenus      = genus
                          }
-                 transforms = defaultPipeline cfg
+                 transforms = case buildPipeline cfg of
+                                Right pl -> plAlgTransforms pl
+                                Left _   -> []
              in Right (src, transforms)
            _ -> Left "Missing ---END SOURCE--- marker"
        _ -> Left $ "Missing ---BEGIN SOURCE--- marker. " ++ show beginMark
@@ -291,6 +299,9 @@ extractPrime = extractNum "-- Field Prime: " 257
 
 extractMaxDeg :: [String] -> Int
 extractMaxDeg ls = fromIntegral $ extractNum "-- Max Degree: " 64 ls
+
+extractGenus :: [String] -> Int
+extractGenus ls = fromIntegral $ extractNum "-- Genus: " 1 ls
 
 extractNum :: String -> Integer -> [String] -> Integer
 extractNum prefix def ls =

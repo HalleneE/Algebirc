@@ -526,6 +526,7 @@ data ObfuscationConfig = ObfuscationConfig
   , cfgMaxSteps        :: !Int       -- ^ Max eval steps (termination budget)
   , cfgSeed            :: !Integer   -- ^ Deterministic seed for transforms
   , cfgEnableAnalysis  :: !Bool      -- ^ Enable analysis modules (False in production)
+  , cfgGenus           :: !Int       -- ^ Obfuscation genus: 1 = Vélu (default), 2 = Richelot+Siegel
   } deriving (Show, Eq, Generic, NFData)
 
 -- | Sensible defaults.
@@ -537,6 +538,7 @@ defaultConfig = ObfuscationConfig
   , cfgMaxSteps       = 10000        -- step budget
   , cfgSeed           = 42           -- default seed
   , cfgEnableAnalysis = True         -- analysis ON (set False for production)
+  , cfgGenus          = 1            -- default: Genus-1 (Vélu); set 2 for Richelot+Siegel
   }
 
 -- ============================================================

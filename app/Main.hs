@@ -20,16 +20,20 @@ main = do
   args <- getArgs
   case args of
     ("obfuscate" : inputFile : rest) -> do
-      let outputFile = case rest of
+      let (genusN, rest1) = parseGenus rest
+          outputFile = case rest1 of
             ["-o", out] -> out
             _           -> inputFile ++ ".obf.hs"
-      runObfuscate inputFile outputFile
+          cfg = defaultConfig { cfgGenus = genusN }
+      runObfuscate cfg inputFile outputFile
 
     ("deobfuscate" : metaFile : rest) -> do
-      let outputFile = case rest of
+      let (genusN, rest1) = parseGenus rest
+          outputFile = case rest1 of
             ["-o", out] -> out
             _           -> "recovered.hs"
-      runDeobfuscate metaFile outputFile
+          cfg = defaultConfig { cfgGenus = genusN }
+      runDeobfuscate cfg metaFile outputFile
 
     ("analyze" : inputFile : _) ->
       runAnalyze inputFile
@@ -55,6 +59,11 @@ main = do
       putStrLn "Error: Unrecognized command directive."
       printUsage
 
+-- | Parse optional --genus N from arg list, returning (genus, remaining args).
+parseGenus :: [String] -> (Int, [String])
+parseGenus ("--genus" : n : rest) = (read n, rest)
+parseGenus args                   = (1, args)
+
 -- ============================================================
 -- CLI Commands
 -- ============================================================
@@ -66,18 +75,22 @@ printUsage = do
   putStrLn "╚══════════════════════════════════════════════════════════════════╝"
   putStrLn ""
   putStrLn "SYNOPSIS:"
-  putStrLn "  algebirc obfuscate <input.hs> [-o out.hs]      -- Construct algebraic obfuscation via degree-bounded isogeny transformations"
-  putStrLn "  algebirc deobfuscate <file.meta> [-o rec.hs]   -- Recover program representation from obfuscation metadata"
-  putStrLn "  algebirc analyze <input.hs>                    -- Perform rigorous algebraic and structural metric analysis"
-  putStrLn "  algebirc compile <input.hs> [-o out.exe]       -- Ahead-of-Time compilation of the obfuscated program representation"
-  putStrLn "  algebirc demo                                  -- Execute comprehensive algorithmic demonstration pipeline"
-  putStrLn "  algebirc help                                  -- Display this technical specification"
+  putStrLn "  algebirc obfuscate <input.hs> [--genus 2] [-o out.hs]   -- Algebraic obfuscation (genus-1 default, genus-2 = Richelot+Siegel)"
+  putStrLn "  algebirc deobfuscate <file.meta> [--genus 2] [-o rec.hs] -- Recover from obfuscation metadata"
+  putStrLn "  algebirc analyze <input.hs>                              -- Algebraic & structural metric analysis"
+  putStrLn "  algebirc compile <input.hs> [-o out.exe]                 -- Ahead-of-Time compilation"
+  putStrLn "  algebirc demo                                            -- Comprehensive pipeline demonstration"
+  putStrLn "  algebirc help                                            -- This help"
+  putStrLn ""
+  putStrLn "GENUS FLAGS:"
+  putStrLn "  --genus 1   Vélu elliptic isogeny (default, fast)"
+  putStrLn "  --genus 2   Richelot (2,2)-isogeny on Genus-2 Jacobian + Siegel modular mixing"
 
-runObfuscate :: FilePath -> FilePath -> IO ()
-runObfuscate inputFile outputFile = do
-  let cfg = defaultConfig
+runObfuscate :: ObfuscationConfig -> FilePath -> FilePath -> IO ()
+runObfuscate cfg inputFile outputFile = do
   putStrLn $ "[+] Loading Source Module: " ++ inputFile
   putStrLn $ "[+] Output Target: " ++ outputFile
+  putStrLn $ "[+] Genus: " ++ show (cfgGenus cfg)
   putStrLn ""
 
   result <- obfuscateFile cfg inputFile outputFile
@@ -96,11 +109,11 @@ runObfuscate inputFile outputFile = do
           proof = checkPipelineInvertibility cfg transforms
       putStrLn $ formatProofCompact proof
       let leakage = analyzeLeakage cfg transforms Nothing
-      putStrLn $ "Security Score: " ++ show (lrSecurityScore leakage) ++ "/100"
+      putStrLn $ "Security Score (heuristic): " ++ show (lrSecurityScore leakage) ++ "/100"
+      putStrLn "  [NOTE: This is an internal heuristic — not a formal security level or NIST claim.]"
 
-runDeobfuscate :: FilePath -> FilePath -> IO ()
-runDeobfuscate metaFile outputFile = do
-  let cfg = defaultConfig
+runDeobfuscate :: ObfuscationConfig -> FilePath -> FilePath -> IO ()
+runDeobfuscate cfg metaFile outputFile = do
   putStrLn $ "[+] Metadata Input: " ++ metaFile
   putStrLn $ "[+] Output Target: " ++ outputFile
   putStrLn ""
