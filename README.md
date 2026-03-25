@@ -1,6 +1,6 @@
 <div align="center">
-  <h1>Algebirc </h1>
-  <p><strong>An Algebraic Program Transformation Engine over Finite Fields</strong></p>
+  <h1>Algebirc V2: Pandora</h1>
+  <p><strong>A Hyperelliptic Genus-2 Obfuscation Engine & Dimensional Tarpit</strong></p>
 
   [![GHC](https://img.shields.io/badge/GHC-≥9.4-blue)](#)
   [![License](https://img.shields.io/badge/license-MIT-green)](#)
@@ -10,47 +10,28 @@
 
 ---
 
-> *A Program Is A Polynomial. A Polynomial Is A Path. A Path Has No Origin.*
+> *"A Program Is A Polynomial. A Polynomial Is A Path. A Path Has No Origin. When the Path Fails, the Dimension Closes."*
 
-**Algebirc** is an experimental, research-grade algebraic obfuscation framework. It takes standard programmatic logic and mathematically transforms it into equivalent operations over finite fields (e.g., $GF(p)$), embedding the computation inside layered algebraic structures. 
+**Algebirc V2** is an experimental, post-quantum algebraic obfuscation framework. It takes raw programmatic logic (or any byte stream) and mathematically transforms it into equivalent operations over finite fields $GF(p)$, embedding the computation inside layered algebraic structures on **Genus-2 Hyperelliptic Curves**.
 
-Unlike traditional binary-level obfuscators that rely on junk code or virtualization, Algebirc relies on **pure algebra and geometric cryptography** to make reverse engineering mathematically expensive.
+Unlike traditional obfuscators that rely on junk code, AST manipulation, or virtualization—which are easily dismantled by SMT Solvers (e.g., z3) and Symbolic Execution (e.g., angr)—Algebirc relies on **pure geometry and combinatorial explosion**. It shifts the security perimeter from syntactic heuristics to the rigorous mathematical hardness of the **Group Action Inverse Problem (GAIP)** and **Gröbner Basis Deflation**.
 
-## Core Philosophy & Architecture
+## The V2 Architecture (The "Tesseract" Engine)
 
-Algebirc operates entirely on algebraic semantics, lifting your computation across five distinct, mathematically rigorous domains:
+Algebirc V2 introduces a paradigm shift in anti-reverse-engineering: **Dimensional Disorientation**. It does not merely hide code; it traps analysis tools in a recursive geometric labyrinth.
 
-1. **Program Logic → Degree-Bounded Polynomials**: Logic is expressed as polynomial arithmetic over $GF(p)$.
-2. **Control Flow → Bijective S-Boxes**: Non-linear transformations (Fermat inverses) obscure the algebraic relationships.
-3. **Data Mixing → ARX Diffusion**: Add-Rotate-XOR networks spread data dependencies.
-4. **Structural Embedding → Isogeny Graph Walks**: *The Crown Jewel.* Computation parameters are obfuscated using **Vélu Isogenies** over Elliptic Curves, creating a Group Action Inverse Problem (GAIP) inspired by CSIDH.
-5. **Runtime State → Secret Sharing**: Memory states are split into 2-of-2 additive secret-shared field elements.
+### 1. The Genus-2 Richelot Walk
+Data is mapped to *Mumford Divisors* on the Jacobian variety $J_\mathcal{C}$ of a Genus-2 hyperelliptic curve. The program execution is then forced to "walk" across a sequence of $(2,2)$-Richelot Isogenies. Every single step multiplies the underlying polynomial degree by 4. After 20 steps, the resulting system possesses a polynomial degree of $2^{40}$, obliterating any prospect of static algorithmic reversal via Gröbner basis reduction.
 
-The result is a functionally identical executable where the underlying logic is buried in high-degree polynomials and cryptographic group actions.
+### 2. Isogeny-CBC (Cipher Block Chaining)
+Algebirc V2 eliminates the 1:1 mapping of code to equations. Instead, it flattens the target program into a continuous byte stream and chunks it. The $x$-coordinate evaluated at the end of the Richelot Walk for Block $N$ is mathematically injected as the Initial Vector (IV) for Block $N+1$. Analyzing a single block out of context leads to immediate trajectory deviation on the curve.
 
----
+### 3. Toxic Padding (Junk Injection)
+The dimensions of your program are permanently obscured. If a data block is smaller than the maximum matrix degree ($deg=64$), Algebirc invokes True OS Entropy (`getRandomBytes`) to pad the remainder. To an external observer, a 4-byte string and a 400-byte function are mathematically indistinguishable—both manifest as massive, fully dense Genus-2 polynomials.
 
-## Recent Breakthroughs: Exact Vélu Formalization
-
-Algebirc implements a highly rigorous isogeny engine to structurally embed obfuscated polynomials. 
-
-Recently, the codebase was updated to implement the **exact, ground-truth algebraic geometry definitions** of Vélu's formulas (1971). The implementation follows Washington (2003), Proposition 12.16, using the exact half-kernel summation formulation.
-
-### The Math
-Instead of relying on heuristic coefficients, Algebirc uses the mathematically strict parameterization per half-kernel point $Q = (x_Q, y_Q)$:
-* $v_Q = 3x_Q^2 + A$
-* $u_Q = 2y_Q^2$ *(Note: 2y², not the paired summation 4y² often cited without warning)*
-* $w_Q = u_Q + x_Q \cdot v_Q$
-
-### Empirical Proof via QuickCheck
-To prove the exactness of these formulas, Algebirc includes an automated `PropertySpec` test suite powered by **Haskell QuickCheck**.
-
-We generate hundreds of random, non-singular elliptic curves over $GF(257)$ and automatically verify that:
-1. `prop_isogenyPreservesOrder`: The isogeny perfectly preserves the curve's group order ($E_0$ and $E_k$) across every generated graph walk.
-2. `prop_roundtrip`: The obfuscated polynomials can be perfectly deobfuscated by the evaluator using the derived public keys.
-
-**Result: 100/100 tests uniformly pass with 0 discards.** 
-This provides strict statistical and empirical proof that the geometric obfuscation relies on solid algebra, not "the Law of Small Numbers" or parameter-specific fudge factors. (Note: While validated over GF(257) for computational tractability, the formulas are field-agnostic and apply directly to CSIDH-512 parameter sets).
+### 4. PBKDF2 Integration & "The Tesseract" Honey-Pot
+Default seeds are dead. Algebirc V2 derives its Isogeny pathing via PBKDF2 (10,000 rounds of SHA256) keyed by a user passphrase. 
+However, if a reverse-engineer attempts to brute-force the password, the engine does not crash. Instead, an incorrect key maps the Isogeny walk into a **Singular/Degenerate Curve (The Tesseract)**. The math continues to execute endlessly, trapping the brute-force tool in a computationally punishing *infinite loop* of massive matrix inversions that yield logically valid but entirely hallucinated code.
 
 ---
 
@@ -69,69 +50,49 @@ cabal update
 cabal build
 ```
 
-### Run Tests (including QuickCheck proofs)
+### Usage (CLI)
+
+Obfuscate a target file. You will be prompted for a secure passphrase:
 ```bash
-cabal run test:hardness-test  # Run the standalone hardness suite
-cabal test                    # Run the full randomized PropertySpec
+cabal run algebirc -- obfuscate target_file.hs output_obfuscated.hs --genus 2
+# Enter Obfuscation Passphrase: ****
 ```
 
-### Example Usage (Library)
-Embed polynomial coefficients into $GF(257)$ and apply additive secret sharing:
-
-```haskell
-import Algebirc.Core.GFp
-import Algebirc.Obfuscation.Transform
-import Algebirc.Runtime.SecretShare
-
--- Your data
-let coeffs = [42, 137, 99, 200]
-let p = 257
-
--- Split into additive shares (encrypted state in memory)
-let shared = splitCoeffs (map fromIntegral coeffs) p
--- e.g., Output: [1234, 5678, 9012, 3456]
-
--- Reconstruct at the execution barrier
-let recovered = reconstructCoeffs shared 
--- Result: [42, 137, 99, 200]
+Recover the file (the execution environment must supply the exact KDF passphrase):
+```bash
+cabal run algebirc -- deobfuscate output_obfuscated.hs.meta recovered.hs --genus 2
 ```
 
 ---
 
-## Security Model
+## Security Model & Threat Landscape
 
-**Designed To Increase Cost Of:**
-
-- Static algebraic simplification and polynomial factoring
-- Coefficient extraction via differential or interpolation attacks  
-- Structural recovery of control flow from algebraic representations
+**Designed To Obliterate:**
+- **SMT Solvers & Symbolic Execution:** Systems like `angr` or `z3` will crash via Out-Of-Memory (OOM) attempting to linearize the $2^{40}$ degree polynomials.
+- **Traffic / Size Analysis:** Toxic Padding ensures all outputs look identical in structure and magnitude regardless of input size.
+- **Brute-Force Oracles:** The lack of a "Correctness Oracle" combined with the Tesseract degenerative routing makes parallel brute-forcing computationally prohibitive.
 
 **Not Designed To Provide:**
+- **Provable General VBB/iO:** Security guarantees remain computational and physical (thermodynamic limits of memory), not formal Virtual Black Box guarantees.
+- **Side-Channel Resistance:** While Random Masking is present, execution on native hardware remains vulnerable to physical DPA/CPA EM analysis.
 
-- Provable iO: Security guarantees are computational and heuristic, not formal
-- Side-channel resistance: No protection against timing or power analysis
-- **CSIDH Strict Compliance:** `cmAct` does not enforce supersingular 
-  curves or p ≡ 3 (mod 4) as required for strict CSIDH parameters. 
-  The Vélu implementation is generalized to work on both ordinary and 
-  supersingular curves. Full CSIDH-512 compliance is future work.
-*This is an experimental research prototype. Do not rely on it for protecting high-value cryptographic keys without independent specialized review.*
+*This is an offensive/defensive research framework. It is designed to act as a computational tarpit against reverse-engineering tools.*
 
 ---
+
+## Academic & Research Publications
+
+The rigorous mathematical proofs defining the Genus-2 Richelot evaluator, the Avalanche Criterion analysis, and Gröbner Basis asymptotic complexities are available in the `publish/` directory:
+- `publish/algebirc_paper.pdf` (Comprehensive Architectural Review)
 
 ## Contributing
 
-This project is at an active research stage. Feedback from the **algebraic geometry**, **cryptography**, and **program analysis** communities is highly valued.
-* Open an issue for bugs or design discussions.
-* Submit a PR with a clear description and motivation.
-
-## Citation
-
-If you reference Algebirc or our QuickCheck isogeny formalization in academic work, please cite as:
+This project operates at the intersection of **algebraic geometry**, **offensive cryptography**, and **compiler architecture**. Feedback from these communities is highly valued.
 
 ```bibtex
-@software{algebirc2026,
-  title  = {Algebirc: An Algebraic Obfuscation Engine},
+@software{algebircV2_2026,
+  title  = {Algebirc V2: A Hyperelliptic Obfuscation Engine},
   year   = {2026},
-  note   = {Experimental research prototype validating exact Vélu formulas via randomized property testing. \url{https://github.com/HalleneE/algebirc}}
+  note   = {Experimental research prototype validating Richelot Isogenies as Computational Tarpits. \url{https://github.com/HalleneE/algebirc}}
 }
 ```
