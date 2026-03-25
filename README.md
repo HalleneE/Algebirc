@@ -1,6 +1,6 @@
 <div align="center">
   <h1>Algebirc V2: Pandora</h1>
-  <p><strong>A Hyperelliptic Genus-2 Obfuscation Engine & Dimensional Tarpit</strong></p>
+  <p><strong>A Hyperelliptic Genus-2 Obfuscation Engine & Mathematical Tarpit</strong></p>
 
   [![GHC](https://img.shields.io/badge/GHC-≥9.4-blue)](#)
   [![License](https://img.shields.io/badge/license-MIT-green)](#)
@@ -16,7 +16,7 @@
 
 Unlike traditional obfuscators that rely on junk code, AST manipulation, or virtualization—which are easily dismantled by SMT Solvers (e.g., z3) and Symbolic Execution (e.g., angr)—Algebirc relies on **pure geometry and combinatorial explosion**. It shifts the security perimeter from syntactic heuristics to the rigorous mathematical hardness of the **Group Action Inverse Problem (GAIP)** and **Gröbner Basis Deflation**.
 
-## The V2 Architecture (The "Tesseract" Engine)
+## The V2 Architecture
 
 Algebirc V2 introduces a paradigm shift in anti-reverse-engineering: **Dimensional Disorientation**. It does not merely hide code; it traps analysis tools in a recursive geometric labyrinth.
 
@@ -29,9 +29,11 @@ Algebirc V2 eliminates the 1:1 mapping of code to equations. Instead, it flatten
 ### 3. Toxic Padding (Junk Injection)
 The dimensions of your program are permanently obscured. If a data block is smaller than the maximum matrix degree ($deg=64$), Algebirc invokes True OS Entropy (`getRandomBytes`) to pad the remainder. To an external observer, a 4-byte string and a 400-byte function are mathematically indistinguishable—both manifest as massive, fully dense Genus-2 polynomials.
 
-### 4. PBKDF2 Integration & "The Tesseract" Honey-Pot
-Default seeds are dead. Algebirc V2 derives its Isogeny pathing via PBKDF2 (10,000 rounds of SHA256) keyed by a user passphrase. 
-However, if a reverse-engineer attempts to brute-force the password, the engine does not crash. Instead, an incorrect key maps the Isogeny walk into a **Singular/Degenerate Curve (The Tesseract)**. The math continues to execute endlessly, trapping the brute-force tool in a computationally punishing *infinite loop* of massive matrix inversions that yield logically valid but entirely hallucinated code.
+### 4. PBKDF2 Integration
+Default seeds are dead. Algebirc V2 derives its Isogeny pathing via PBKDF2 (10,000 rounds of SHA256) keyed by a user passphrase. Without the exact passphrase, the generated Initial Vector (IV) and Richelot parameters will misalign, causing the engine to reconstruct corrupted, pseudo-random byte streams that fail to parse or execute.
+
+### 5. Adversarial Oracle & Red-Teaming (Analysis Suite)
+Algebirc does not blindly trust its math. The engine ships with an internal `AlgebraicLeakage` and `AdversarialOracle` suite. During compilation, it autonomously attacks itself to measure Gaussian Rank Inference, Strict Avalanche Criterion (SAC), and Gröbner Basis complexity. It statically guarantees that its own output matrices are impervious to Subspace Attacks.
 
 ---
 
@@ -70,7 +72,6 @@ cabal run algebirc -- deobfuscate output_obfuscated.hs.meta recovered.hs --genus
 **Designed To Obliterate:**
 - **SMT Solvers & Symbolic Execution:** Systems like `angr` or `z3` will crash via Out-Of-Memory (OOM) attempting to linearize the $2^{40}$ degree polynomials.
 - **Traffic / Size Analysis:** Toxic Padding ensures all outputs look identical in structure and magnitude regardless of input size.
-- **Brute-Force Oracles:** The lack of a "Correctness Oracle" combined with the Tesseract degenerative routing makes parallel brute-forcing computationally prohibitive.
 
 **Not Designed To Provide:**
 - **Provable General VBB/iO:** Security guarantees remain computational and physical (thermodynamic limits of memory), not formal Virtual Black Box guarantees.
