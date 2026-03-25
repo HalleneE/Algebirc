@@ -153,8 +153,9 @@ pipelineSpec = describe "Obfuscation Pipeline" $ do
   it "obfuscateSource works on parsed module" $ do
     let src = "module Obf where\nsquare x = x * x"
     case parseHaskellSource src of
-      Right pr ->
-        case obfuscateSource cfg src (prModule pr) of
+      Right pr -> do
+        res <- obfuscateSource cfg src (prModule pr)
+        case res of
           Left err -> expectationFailure $ "Obfuscation error: " ++ show err
           Right od -> do
             length (odBlocks od) `shouldSatisfy` (>= 1)

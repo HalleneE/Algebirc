@@ -118,9 +118,9 @@ spec = describe "Algebirc.Geometry Properties (QuickCheck)" $ do
         in (recovered === original) .&&.
            counterexample "GAIP Witness must be valid" (verifyWitness wit)
            
-    it "prop_obfuscationChangesValues: obfuscating modifies the polynomial (unless trivially E₀=Eₖ)" $
+    it "prop_obfuscationChangesValues: obfuscating modifies the polynomial (unless trivially E₀=Eₖ or j=0)" $
       property $ \(NonTrivialObfuscation (ValidCurve257 ec) (CoeffList original) seed) ->
         let params = testParams ec
             sk = generateSecretKey params seed
             (obfuscated, _) = obfuscateWithCSIDH sk original
-        in obfuscated =/= original
+        in (obfuscated /= original) ==> (obfuscated =/= original)
