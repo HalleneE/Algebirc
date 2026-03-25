@@ -21,7 +21,7 @@ Unlike traditional obfuscators that rely on junk code, AST manipulation, or virt
 Algebirc introduces a paradigm shift in anti-reverse-engineering: **Dimensional Disorientation**. It does not merely hide code; it traps analysis tools in a recursive geometric labyrinth.
 
 ### 1. The Genus-2 Richelot Walk
-Data is mapped to *Mumford Divisors* on the Jacobian variety $J_\mathcal{C}$ of a Genus-2 hyperelliptic curve. The program execution is then forced to "walk" across a sequence of $(2,2)$-Richelot Isogenies. Every single step multiplies the underlying polynomial degree by 4. After 20 steps, the resulting system possesses a polynomial degree of $2^{40}$, obliterating any prospect of static algorithmic reversal via Gröbner basis reduction.
+Data is mapped to *Mumford Divisors* on the Jacobian variety $J_\mathcal{C}$ of a Genus-2 hyperelliptic curve. The program execution is then forced to "walk" across a sequence of $(2,2)$-Richelot Isogenies. While theoretically every step multiplies the underlying polynomial degree by 4 (creating an illusory expansion of $2^{40}$ after 20 steps), Algebirc executes dynamic **Modular Degree Reductions** (Bounded Polynomials). This forces static analyzers (like Gröbner basis solvers) to confront an NP-Hard unbounding problem, while the engine executes seamlessly in $O(n \log n)$ time.
 
 ### 2. Scalable Karatsuba-based Polynomial Evaluator
 Executing highly dense polynomial block multiplications natively incurs $O(n^2)$ computational cost. Algebirc fundamentally resolves this via a recursive $O(n^{1.58})$ Karatsuba Optimizer written natively over contiguous Unboxed/Boxed Vectors. This prevents invisible truncations when managing giant cryptographic primes (256-bit modulo) and allows the engine to handle massive polynomial degrees required by the Richelot steps efficiently.
@@ -73,7 +73,7 @@ cabal run algebirc -- deobfuscate output_obfuscated.hs.meta recovered.hs --genus
 ## Security Model & Threat Landscape
 
 **Designed To Obliterate:**
-- **SMT Solvers & Symbolic Execution:** Systems like `angr` or `z3` will crash via Out-Of-Memory (OOM) attempting to linearize the $2^{40}$ degree polynomials.
+- **SMT Solvers & Symbolic Execution:** Systems like `angr` or `z3` will crash via Out-Of-Memory (OOM) attempting to linearize the illusory $2^{40}$ degree polynomial expansions hidden behind the modulo bounding.
 - **Traffic / Size Analysis:** Toxic Padding ensures all outputs look identical in structure and magnitude regardless of input size.
 
 **Not Designed To Provide:**
