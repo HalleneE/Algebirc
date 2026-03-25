@@ -12,6 +12,8 @@ module Algebirc.Obfuscation.Encoder
   , encodeModule
   , decodeExpr
   , decodeModule
+  , encodeStream
+  , decodeStream
     -- * Byte-Level
   , bytesToFieldElements
   , fieldElementsToBytes
@@ -24,6 +26,7 @@ import Algebirc.Core.Types
 import Algebirc.Obfuscation.AST
 import qualified Data.ByteString as BS
 import Data.Char (ord, chr)
+import Crypto.Random (getRandomBytes)
 
 -- ============================================================
 -- Encoded Types
@@ -134,6 +137,48 @@ decodeModule :: EncodedModule -> String
 decodeModule em =
   let cfg = emConfig em
   in concatMap (decodeExpr cfg) (emBlocks em)
+
+-- ============================================================
+-- Stream Encoding with True Random Padding
+-- ============================================================
+
+-- | Encode a string stream into exactly maxDeg-sized blocks with True OS Random padding.
+encodeStream :: ObfuscationConfig -> String -> IO [EncodedBlock]
+encodeStream cfg srcStr = do
+  let bytes = map (fromIntegral . ord) srcStr
+      p = cfgFieldPrime cfg
+      maxDeg = cfgMaxDegree cfg
+      blockSize = maxDeg + 1
+
+  let chunkList [] = return []
+      chunkList bs = do
+        let (chunk, rest) = splitAt blockSize bs
+        if length chunk == blockSize
+          then do
+            rest' <- chunkList rest
+            return (chunk : rest')
+          else do
+            let padLen = blockSize - length chunk
+            padBytes <- getRandomBytes padLen :: IO BS.ByteString
+            let padInts = map fromIntegral (BS.unpack padBytes)
+            return [chunk ++ padInts]
+
+  chunks <- chunkList bytes
+  let makeBlock idx chunk =
+        let terms = zipWith (\b i -> Term b i) chunk [0 .. maxDeg]
+            poly = mkBoundedPoly p maxDeg terms
+        in EncodedBlock poly blockSize idx
+  return $ zipWith makeBlock [0..] chunks
+
+-- | Decode blocks and truncate to original length (binning the toxic padding).
+decodeStream :: ObfuscationConfig -> [EncodedBlock] -> Int -> String
+decodeStream cfg blocks origLen =
+  let p = cfgFieldPrime cfg
+      decodeOne (EncodedBlock poly _ _) =
+        [ getCoeffAt i poly | i <- [0 .. cfgMaxDegree cfg] ]
+      allBytes = concatMap decodeOne blocks
+      validBytes = take origLen allBytes
+  in map (chr . fromIntegral . (`mod` 256)) validBytes
 
 -- ============================================================
 -- Helpers

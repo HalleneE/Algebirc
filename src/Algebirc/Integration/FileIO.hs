@@ -1,14 +1,7 @@
 -- |
 -- Module      : Algebirc.Integration.FileIO
--- Description : File-level obfuscation/deobfuscation pipeline
+-- Description : File-level obfuscation/deobfuscation pipeline with Isogeny-CBC
 -- License     : MIT
---
--- Pipeline lengkap: baca .hs → parse → encode → transform → simpan
--- Juga: baca obfuscated → decode → reconstruct → tulis .hs
---
--- Format output: dua file per obfuscation:
--- * @.algebirc@ — obfuscated polynomial data (binary-safe JSON)
--- * @.algebirc.meta@ — metadata (transform keys, original size)
 
 module Algebirc.Integration.FileIO
   ( -- * Pipeline
@@ -36,165 +29,156 @@ import Algebirc.Core.Group (generateFromSeed)
 import Data.Either (fromRight)
 import Control.Monad (foldM)
 import Data.List (isPrefixOf)
+import Crypto.Random (getRandomBytes)
+import qualified Data.ByteString as BS
 
 -- ============================================================
 -- Types
 -- ============================================================
 
--- | Data obfuscation: berisi polynomial + metadata untuk deobfuscate.
 data ObfuscationData = ObfuscationData
-  { odBlocks     :: ![(EncodedBlock, EncodedBlock)]  -- ^ (original, obfuscated) pairs
-  , odTransforms :: ![Transform]                      -- ^ Transforms yang dipakai
-  , odConfig     :: !ObfuscationConfig                -- ^ Config
-  , odOrigSrc    :: !String                           -- ^ Source asli (untuk verifikasi)
-  , odModule     :: !SourceModule                     -- ^ Parsed module
+  { odBlocks     :: ![(EncodedBlock, EncodedBlock)]  
+  , odTransforms :: ![Transform]                      
+  , odConfig     :: !ObfuscationConfig                
+  , odOrigSrc    :: !String                           
+  , odModule     :: !SourceModule                     
+  , odIV         :: !Integer
+  , odOrigLen    :: !Int
   } deriving (Show)
 
 -- ============================================================
 -- File Pipeline
 -- ============================================================
 
--- | Parse and obfuscate file without writing output.
 processFile :: ObfuscationConfig -> FilePath -> IO (Either String ObfuscationData)
 processFile cfg inputPath = do
   parseResult <- parseHaskellFile inputPath
   case parseResult of
     Left err -> return $ Left $ "Parse error: " ++ err
     Right pr -> do
-      return $ case obfuscateSource cfg (prOriginal pr) (prModule pr) of
-        Left err -> Left $ "Obfuscation error: " ++ show err
-        Right od -> Right od
+      res <- obfuscateSource cfg (prOriginal pr) (prModule pr)
+      case res of
+        Left err -> return $ Left $ "Obfuscation error: " ++ show err
+        Right od -> return $ Right od
 
--- | Obfuscate file .hs.
--- Baca source → parse → encode → transform → simpan hasil.
-obfuscateFile :: ObfuscationConfig
-             -> FilePath         -- ^ Input .hs file
-             -> FilePath         -- ^ Output file (obfuscated .hs)
-             -> IO (Either String ObfuscationData)
+obfuscateFile :: ObfuscationConfig -> FilePath -> FilePath -> IO (Either String ObfuscationData)
 obfuscateFile cfg inputPath outputPath = do
   res <- processFile cfg inputPath
   case res of
     Left err -> return $ Left err
     Right od -> do
-      -- Tulis obfuscated source
-      -- Tulis obfuscated source (sebagai komentar polynomial data + reconstructed source)
-      let obfHaskell = sourceToHaskell (odModule od)
-          polyData = formatObfuscatedData (odBlocks od)
+      let polyData = formatObfuscatedData (odBlocks od)
           outputContent = unlines
             [ "{- ALGEBIRC OBFUSCATED DATA"
             , "   DO NOT EDIT MANUALLY"
             , ""
             , polyData
             , "-}"
-            , ""
-            , "-- Reconstructed Source (for verification):"
-            , obfHaskell
             ]
       writeFile outputPath outputContent
-      -- Juga tulis metadata untuk deobfuscation
       let metaPath = outputPath ++ ".meta"
           metaContent = serializeMetadata od
       writeFile metaPath metaContent
       return $ Right od
 
--- | Deobfuscate: baca obfuscated data → reconstruct source.
-deobfuscateFile :: ObfuscationConfig
-               -> FilePath        -- ^ Input meta file (.algebirc.meta)
-               -> FilePath        -- ^ Output .hs file (recovered)
-               -> IO (Either String String)
+deobfuscateFile :: ObfuscationConfig -> FilePath -> FilePath -> IO (Either String String)
 deobfuscateFile _cfg metaPath outputPath = do
   metaContent <- readFile metaPath
   case deserializeMetadata metaContent of
     Left err -> return $ Left $ "Metadata error: " ++ err
-    Right (cfg, blocks) ->
-      case deobfuscateData cfg blocks of
+    Right (cfg, iv, origLen, blocks) ->
+      case deobfuscateData cfg iv origLen blocks of
         Left err -> return $ Left $ "Deobfuscation error: " ++ show err
         Right recovered -> do
           writeFile outputPath recovered
           return $ Right recovered
 
 -- ============================================================
--- In-Memory Pipeline
+-- In-Memory Pipeline (Flattened + OS Entropy Padding)
 -- ============================================================
 
--- | Obfuscate source code in memory.
-obfuscateSource :: ObfuscationConfig
-               -> String           -- ^ Original source
-               -> SourceModule     -- ^ Parsed module
-               -> Either AlgebircError ObfuscationData
-obfuscateSource cfg origSrc sourceMod =
+extractIV :: BoundedPoly -> Integer
+extractIV (BoundedPoly terms _ p) = sum (map termCoeff terms) `mod` p
+
+chainObfuscate :: ObfuscationConfig -> ObfuscationPipeline -> Integer -> [EncodedBlock] -> Either AlgebircError [(EncodedBlock, EncodedBlock)]
+chainObfuscate cfg pl iv0 blocks =
+  let go _ [] = Right []
+      go iv (b:bs) = do
+        let p = cfgFieldPrime cfg
+            BoundedPoly terms md _ = ebPoly b
+            maskedTerms = map (\(Term c e) -> Term ((c + iv) `mod` p) e) terms
+            maskedPoly = mkBoundedPoly p md maskedTerms
+        obfPoly <- runPipelinePoly cfg pl maskedPoly
+        let nextIv = extractIV obfPoly
+            obfBlock = b { ebPoly = obfPoly }
+        rest <- go nextIv bs
+        return ((b, obfBlock) : rest)
+  in go iv0 blocks
+
+chainDeobfuscate :: ObfuscationConfig -> ObfuscationPipeline -> Integer -> [EncodedBlock] -> Either AlgebircError [EncodedBlock]
+chainDeobfuscate cfg pl iv0 obfBlocks =
+  let go _ [] = Right []
+      go iv (ob:obs) = do
+        maskedPoly <- invertPipelinePoly cfg pl (ebPoly ob)
+        let p = cfgFieldPrime cfg
+            BoundedPoly terms md _ = maskedPoly
+            unmaskedTerms = map (\(Term c e) -> Term ((c - iv) `mod` p) e) terms
+            origPoly = mkBoundedPoly p md unmaskedTerms
+            origBlock = ob { ebPoly = origPoly }
+            nextIv = extractIV (ebPoly ob)
+        rest <- go nextIv obs
+        return (origBlock : rest)
+  in go iv0 obfBlocks
+
+obfuscateSource :: ObfuscationConfig -> String -> SourceModule -> IO (Either AlgebircError ObfuscationData)
+obfuscateSource cfg origSrc sourceMod = do
   case buildPipeline cfg of
-    Left err -> Left err
-    Right pl ->
-      let transforms  = plAlgTransforms pl
-          declExprs   = moduleToDeclExprs sourceMod
-      in case mapM (encodeAndObfuscate cfg pl) declExprs of
-           Left err -> Left err
-           Right blockPairs ->
-             Right ObfuscationData
-               { odBlocks     = blockPairs
-               , odTransforms = transforms
-               , odConfig     = cfg
-               , odOrigSrc    = origSrc
-               , odModule     = sourceMod
-               }
+    Left err -> return (Left err)
+    Right pl -> do
+      blocks <- encodeStream cfg origSrc
+      ivBytes <- getRandomBytes 16 :: IO BS.ByteString
+      let iv = foldl (\acc b -> acc * 256 + fromIntegral b) 0 (BS.unpack ivBytes)
+      let transforms = plAlgTransforms pl
+      case chainObfuscate cfg pl iv blocks of
+        Left err -> return (Left err)
+        Right blockPairs ->
+          return $ Right ObfuscationData
+            { odBlocks     = blockPairs
+            , odTransforms = transforms
+            , odConfig     = cfg
+            , odOrigSrc    = origSrc
+            , odModule     = sourceMod
+            , odIV         = iv
+            , odOrigLen    = length origSrc
+            }
 
--- | Deobfuscate data recovered from encoded blocks strings.
-deobfuscateData :: ObfuscationConfig -> [EncodedBlock] -> Either AlgebircError String
-deobfuscateData cfg blocks = do
+deobfuscateData :: ObfuscationConfig -> Integer -> Int -> [EncodedBlock] -> Either AlgebircError String
+deobfuscateData cfg iv origLen blocks = do
   pl <- buildPipeline cfg
-  let decodeOne block = do
-        origPoly <- invertPipelinePoly cfg pl (ebPoly block)
-        return $ decodeExpr cfg (block { ebPoly = origPoly })
-  decodedStrings <- mapM decodeOne blocks
-  return $ unlines decodedStrings
-
--- | Encode satu expresi dan obfuscate.
-encodeAndObfuscate :: ObfuscationConfig
-                  -> ObfuscationPipeline
-                  -> SourceExpr
-                  -> Either AlgebircError (EncodedBlock, EncodedBlock)
-encodeAndObfuscate cfg pl expr =
-  case encodeExpr cfg expr of
-    Left err -> Left err
-    Right block ->
-      case runPipelinePoly cfg pl (ebPoly block) of
-        Left err -> Left err
-        Right obfPoly -> Right (block, block { ebPoly = obfPoly })
-
--- removed redundant unified handlers from FileIO, use Pipeline layers.
+  origBlocks <- chainDeobfuscate cfg pl iv blocks
+  return $ decodeStream cfg origBlocks origLen
 
 -- ============================================================
 -- Default Pipeline
 -- ============================================================
 
--- | Generate pipeline standar dari config seed.
 defaultPipeline :: ObfuscationConfig -> [Transform]
 defaultPipeline cfg =
   let seed = cfgSeed cfg
-      -- Create secret key from seed
       sk = SecretKey
            { skSeed     = seed
-           , skRounds   = 4  -- 4 rounds Feistel
+           , skRounds   = 4 
            , skSBoxSeed = seed + 1
            , skPowerExp = 3
            }
   in case generatePipeline cfg sk of
        Right transforms -> transforms
-       Left _ -> [] -- Should not happen with valid config
+       Left _ -> [] 
 
 -- ============================================================
--- Helpers
+-- Serialization
 -- ============================================================
 
--- | Extract semua expressions dari module declarations.
-moduleToDeclExprs :: SourceModule -> [SourceExpr]
-moduleToDeclExprs (SourceModule _ decls) = map declToExpr decls
-  where
-    declToExpr (FuncDecl _ _ body)  = body
-    declToExpr (ValDecl _ body)     = body
-
--- | Serialize metadata untuk menyimpan transform info.
 serializeMetadata :: ObfuscationData -> String
 serializeMetadata od =
   unlines
@@ -204,6 +188,8 @@ serializeMetadata od =
     , "-- Max Degree: " ++ show (cfgMaxDegree (odConfig od))
     , "-- Seed: " ++ show (cfgSeed (odConfig od))
     , "-- Genus: " ++ show (cfgGenus (odConfig od))
+    , "-- CBC IV: " ++ show (odIV od)
+    , "-- Source Length: " ++ show (odOrigLen od)
     , "-- Transform Count: " ++ show (length (odTransforms od))
     , "-- Block Count: " ++ show (length (odBlocks od))
     , "---BEGIN OBFUSCATED BLOCKS---"
@@ -219,9 +205,7 @@ formatObfuscatedData blocks = unlines $ map fmtBlock blocks
           coeffs = polyCoefficients poly
       in "BLOCK " ++ show (ebBlockId obf) ++ ": " ++ show coeffs
 
-
--- | Deserialize metadata.
-deserializeMetadata :: String -> Either String (ObfuscationConfig, [EncodedBlock])
+deserializeMetadata :: String -> Either String (ObfuscationConfig, Integer, Int, [EncodedBlock])
 deserializeMetadata content =
   let ls = lines content
   in case break (== "---BEGIN OBFUSCATED BLOCKS---") ls of
@@ -232,6 +216,8 @@ deserializeMetadata content =
                  prime = extractPrime headerLines
                  maxDeg = extractMaxDeg headerLines
                  genus = extractGenus headerLines
+                 iv = extractNum "-- CBC IV: " 0 headerLines
+                 origLen = fromIntegral $ extractNum "-- Source Length: " 0 headerLines
                  cfg = defaultConfig
                          { cfgFieldPrime = prime
                          , cfgMaxDegree  = maxDeg
@@ -239,7 +225,7 @@ deserializeMetadata content =
                          , cfgGenus      = genus
                          }
                  blocks = parseBlocks prime maxDeg blockLines
-             in Right (cfg, blocks)
+             in Right (cfg, iv, origLen, blocks)
            _ -> Left "Missing ---END OBFUSCATED BLOCKS--- marker"
        _ -> Left "Missing ---BEGIN OBFUSCATED BLOCKS--- marker"
 
@@ -247,8 +233,8 @@ parseBlocks :: Integer -> Int -> [String] -> [EncodedBlock]
 parseBlocks prime maxDeg ls =
   [ let (idStr, rest) = break (== ':') (drop 6 l)
         bid = read idStr :: Int
-        coeffs = read (drop 2 rest) :: [Integer]
-        terms = zipWith (\i c -> Term c i) [0..] coeffs
+        coeffTuples = read (drop 2 rest) :: [(Int, Integer)]
+        terms = map (\(d, c) -> Term c d) coeffTuples
         poly = mkBoundedPoly prime maxDeg terms
     in EncodedBlock poly (maxDeg+1) bid
   | l <- ls, "BLOCK " `isPrefixOf` l ]

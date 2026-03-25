@@ -15,24 +15,60 @@ import Algebirc.Analysis.DegreeTracker
 import Algebirc.Analysis.Invertibility
 import Algebirc.Analysis.Leakage
 
+import System.IO (hFlush, stdout)
+import Crypto.Hash (SHA256(..), hashWith)
+import qualified Data.ByteArray as BA
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as B8
+
+-- | Hash iteration for deriving a secure 256-bit seed from password
+deriveSeed :: String -> Integer
+deriveSeed pass =
+    let salt = B8.pack "algebirc_salt_v1"
+        loop :: Int -> BS.ByteString -> BS.ByteString
+        loop 0 h = h
+        loop n h = loop (n - 1) (BA.convert (hashWith SHA256 h) :: BS.ByteString)
+        finalHash = loop 10000 (B8.pack pass `BS.append` salt)
+    in foldl (\acc b -> acc * 256 + fromIntegral b) 0 (BS.unpack finalHash)
+
+promptPassword :: Maybe String -> IO String
+promptPassword (Just p) = return p
+promptPassword Nothing = do
+    putStr "Enter Obfuscation Passphrase: "
+    hFlush stdout
+    getLine
+
+parsePassword :: [String] -> (Maybe String, [String])
+parsePassword [] = (Nothing, [])
+parsePassword ("--password" : p : rest) = (Just p, rest)
+parsePassword ("-p" : p : rest) = (Just p, rest)
+parsePassword (x:xs) =
+  let (pass, rest) = parsePassword xs
+  in (pass, x : rest)
+
 main :: IO ()
 main = do
-  args <- getArgs
+  args0 <- getArgs
+  let (mPass, args) = parsePassword args0
   case args of
     ("obfuscate" : inputFile : rest) -> do
+      pass <- promptPassword mPass
       let (genusN, rest1) = parseGenus rest
           outputFile = case rest1 of
             ["-o", out] -> out
             _           -> inputFile ++ ".obf.hs"
-          cfg = defaultConfig { cfgGenus = genusN }
+          seed = deriveSeed pass
+          cfg = defaultConfig { cfgGenus = genusN, cfgSeed = seed }
       runObfuscate cfg inputFile outputFile
 
     ("deobfuscate" : metaFile : rest) -> do
+      pass <- promptPassword mPass
       let (genusN, rest1) = parseGenus rest
           outputFile = case rest1 of
             ["-o", out] -> out
             _           -> "recovered.hs"
-          cfg = defaultConfig { cfgGenus = genusN }
+          seed = deriveSeed pass
+          cfg = defaultConfig { cfgGenus = genusN, cfgSeed = seed }
       runDeobfuscate cfg metaFile outputFile
 
     ("analyze" : inputFile : _) ->
