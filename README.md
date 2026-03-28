@@ -1,14 +1,13 @@
 # Algebirc: High-Genus Algebraic Obfuscation Engine
 
-Algebirc is a Turing-complete software obfuscation framework constructed upon the formal principles of high-genus algebraic geometry and lattice-based cryptography. The engine implements a novel execution model termed "Invisible Logic Gates," wherein computational branching is mapped onto Richelot isogenies between Genus-2 hyperelliptic Jacobians. This architecture ensures that execution paths are structurally and temporally indistinguishable under both static analysis and microarchitectural side-channel observation.
+Algebirc is a Turing-complete software obfuscation framework constructed upon the formal principles of high-genus algebraic geometry. The engine implements a novel execution model termed "Invisible Logic Gates," wherein computational branching is mapped onto Richelot isogenies between Genus-2 hyperelliptic Jacobians. This architecture ensures that execution paths are structurally and temporally indistinguishable under both static analysis and microarchitectural side-channel observation.
 
 ## Mathematical Foundations
 
-The obfuscation pipeline leverages three distinct algebraic layers to achieve computational hardness and mathematical irreducibility:
+The obfuscation pipeline leverages two distinct algebraic layers to achieve computational hardness and mathematical irreducibility:
 
 1.  Isogeny-Based Topology: Logical control flow is translated into isogeny walks within the isogeny graph of genus-2 curves. By utilizing Richelot correspondences, the engine evaluates parallel "True" and "False" branches simultaneously, merging the results into a unified codomain. This methodology eliminates conditional jump instructions and replaces them with continuous geometric mappings.
-2.  Lattice-Based Hardness: Internal state transitions and plaintext scalars are protected via Ring Learning With Errors (RLWE) constructions. This provides a secondary layer of post-quantum security for sensitive coefficients within the polynomial rings.
-3.  Jacobian Arithmetic: Group operations are executed within the Jacobian variety of hyperelliptic curves. The system utilizes Mumford representation and a hardened implementation of Cantor's algorithm, specifically engineered to resist zero-divisor collapse and identity leakage.
+2.  Jacobian Arithmetic: Group operations are executed within the Jacobian variety of hyperelliptic curves. The system utilizes Mumford representation and a hardened implementation of Cantor's algorithm, specifically engineered to resist zero-divisor collapse and identity leakage.
 
 ## Hardware-Level Security Architecture
 
@@ -49,9 +48,8 @@ cabal test algebirc-test
 ```
 
 ## Documentation
-Additional technical specifications are available in the following internal documents:
+Additional technical specifications are available in the following internal document:
 *   RICHELOT_PIPELINE.md: Formal analysis of Kunzweiler correspondences and isogeny walk construction.
-*   TESSERACT_ARCHITECTURE.md: Specification of the constant-time memory model and FFI boundary.
 
 ## Disclaimer
 Algebirc is a research prototype intended for the study of high-genus algebraic obfuscation techniques. While it incorporates advanced constant-time methodologies, it has not undergone a formal third-party security audit. Production deployment should be preceded by exhaustive independent verification.
