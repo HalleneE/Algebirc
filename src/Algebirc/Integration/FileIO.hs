@@ -107,8 +107,10 @@ deobfuscateFile _cfg metaPath outputPath = do
 --   2. Nonlinear in coefficients (IV ≠ sum of coefficients)
 --   3. Pure (no IO required)
 extractIV :: ObfuscationConfig -> BoundedPoly -> Integer
-extractIV cfg (BoundedPoly terms maxDeg p) =
-  let seed = cfgSeed cfg
+extractIV cfg poly =
+  let p = polyField poly
+      terms = polyTerms poly
+      seed = cfgSeed cfg
       -- Evaluate poly at two seed-derived points
       evalAt x = foldl (\acc (Term c e) -> (acc + c * powMod x (fromIntegral e) p) `mod` p) 0 terms
       x0 = seed `mod` p
@@ -129,7 +131,9 @@ chainObfuscate cfg pl iv0 blocks =
   let go _ [] = Right []
       go iv (b:bs) = do
         let p = cfgFieldPrime cfg
-            BoundedPoly terms md _ = ebPoly b
+            bpoly = ebPoly b
+            md = polyMaxDegree bpoly
+            terms = polyTerms bpoly
             maskedTerms = map (\(Term c e) -> Term ((c + iv) `mod` p) e) terms
             maskedPoly = mkBoundedPoly p md maskedTerms
         obfPoly <- runPipelinePoly cfg pl maskedPoly
@@ -145,7 +149,8 @@ chainDeobfuscate cfg pl iv0 obfBlocks =
       go iv (ob:obs) = do
         maskedPoly <- invertPipelinePoly cfg pl (ebPoly ob)
         let p = cfgFieldPrime cfg
-            BoundedPoly terms md _ = maskedPoly
+            md = polyMaxDegree maskedPoly
+            terms = polyTerms maskedPoly
             unmaskedTerms = map (\(Term c e) -> Term ((c - iv) `mod` p) e) terms
             origPoly = mkBoundedPoly p md unmaskedTerms
             origBlock = ob { ebPoly = origPoly }

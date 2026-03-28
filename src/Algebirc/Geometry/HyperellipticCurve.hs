@@ -396,9 +396,11 @@ cantorReduceCT hc = cantorStepCT hc . cantorStepCT hc
 
 normalizeDiv :: MumfordDiv -> MumfordDiv
 normalizeDiv (MumfordDiv u v p) =
-  let uMonic = polyMakeMonic p u
-      vReduced = polyMod p v uMonic
-  in MumfordDiv uMonic (polyNorm p vReduced) p
+  if polyDeg u < 0
+  then jacobianIdentity p
+  else let uMonic = polyMakeMonic p u
+           vReduced = polyMod p v uMonic
+       in MumfordDiv uMonic (polyNorm p vReduced) p
 
 validateDiv :: HyperCurve -> MumfordDiv -> Bool
 validateDiv (HyperCurve fCoeffs g p) (MumfordDiv u v _) =

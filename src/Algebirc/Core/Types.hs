@@ -26,6 +26,8 @@ module Algebirc.Core.Types
   , polyMaxDegree
   , polyCoefficients
   , getCoeffAt
+  , getCoeffAtCT
+  , polyTerms
   , Term(..)
     -- * Permutation Groups
   , Permutation(..)
@@ -78,7 +80,7 @@ import GHC.Generics (Generic)
 import Control.DeepSeq (NFData)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.List (sortBy, groupBy)
+import Data.List (sortBy, groupBy, foldl')
 import Data.Ord (Down(..))
 import qualified Data.Vector as V
 
@@ -116,62 +118,31 @@ data Term = Term
   , termExp   :: !Int
   } deriving (Show, Eq, Generic, NFData)
 
--- | Degree-bounded polynomial in canonical form.
---
--- __Canonical Form Invariants (Unique Representation):__
---
--- 1. Terms sorted by DESCENDING exponent
--- 2. No two terms share the same exponent
--- 3. No term has coefficient 0 (except zero polynomial = [])
--- 4. Degree <= maxDeg
---
--- These invariants guarantee:
--- * __Unique representation__: exactly one way to represent each polynomial
--- * __Order invariant__: sorted descending, always
--- * __Deterministic__: @canonicalize . canonicalize = canonicalize@
 data BoundedPoly = BoundedPoly
-  { polyTerms  :: ![Term]     -- ^ Terms in canonical form
-  , polyMaxDeg :: !Int         -- ^ Hard degree cap
-  , polyField  :: !Integer     -- ^ Coefficient modulus (0 = unbounded integers)
-  } deriving (Show, Generic, NFData)
+  { polyCoeffs :: !(V.Vector Integer)  -- ^ Dense representation: coeffs[i] = coef of x^i
+  , polyMaxDeg :: !Int                 -- ^ Hard degree cap
+  , polyField  :: !Integer             -- ^ Coefficient modulus (0 = unbounded integers)
+  } deriving (Show, Eq, Generic, NFData)
 
-instance Eq BoundedPoly where
-  a == b = polyTerms a == polyTerms b
-        && polyMaxDeg a == polyMaxDeg b
-        && polyField a  == polyField b
-
--- | Enforce canonical form on a list of terms.
-canonicalize :: Integer -> Int -> [Term] -> [Term]
-canonicalize fieldMod maxDeg terms =
-  let -- 1. Reduce coefficients mod field (if fieldMod > 0)
-      reduced = if fieldMod > 0
-                then map (\(Term c e) -> Term (((c `mod` fieldMod) + fieldMod) `mod` fieldMod) e) terms
-                else terms
-      -- 2. Sort DESCENDING by exponent
-      sorted  = sortBy (\a b -> compare (Down (termExp a)) (Down (termExp b))) reduced
-      -- 3. Group by exponent, sum coefficients
-      grouped = groupBy (\a b -> termExp a == termExp b) sorted
-      merged  = map (\grp -> Term (sum (map termCoeff grp)) (termExp (head grp))) grouped
-      -- 4. Strip zeros and reduce again
-      nonZero = if fieldMod > 0
-                then filter (\(Term c _) -> (c `mod` fieldMod) /= 0) 
-                           $ map (\(Term c e) -> Term (c `mod` fieldMod) e) merged
-                else filter (\(Term c _) -> c /= 0) merged
-      -- 5. Truncate to degree cap
-      capped  = filter (\(Term _ e) -> e <= maxDeg) nonZero
-  in capped
-
--- | Smart constructor. Enforces canonical form.
+-- | Smart constructor. Creates dense zero-padded vector.
 mkBoundedPoly :: Integer -> Int -> [Term] -> BoundedPoly
 mkBoundedPoly fieldMod maxDeg terms =
-  BoundedPoly (canonicalize fieldMod maxDeg terms) maxDeg fieldMod
+  let v = V.replicate (maxDeg + 1) 0
+      v' = foldl' (\acc (Term c e) ->
+             if e <= maxDeg
+             then let newC = acc V.! e + c
+                      newCRed = if fieldMod > 0 then ((newC `mod` fieldMod) + fieldMod) `mod` fieldMod else newC
+                  in acc V.// [(e, newCRed)]
+             else acc
+           ) v terms
+  in BoundedPoly v' maxDeg fieldMod
 
 -- | Degree of the polynomial (actual highest non-zero exponent).
 polyDegree :: BoundedPoly -> Int
-polyDegree (BoundedPoly terms _ _) = 
-  case filter (\(Term c _) -> c /= 0) terms of
-    [] -> 0
-    (t:_) -> termExp t
+polyDegree (BoundedPoly coeffs _ _) = 
+  case V.findIndexR (/= 0) coeffs of
+    Just i  -> i
+    Nothing -> 0
 
 -- | Get the max degree cap.
 polyMaxDegree :: BoundedPoly -> Int
@@ -179,14 +150,26 @@ polyMaxDegree (BoundedPoly _ md _) = md
 
 -- | Get coefficient at a specific exponent (0 if not present).
 getCoeffAt :: Int -> BoundedPoly -> Integer
-getCoeffAt i (BoundedPoly terms _ _) =
-  case filter (\(Term _ e) -> e == i) terms of
-    (Term c _):_ -> c
-    []           -> 0
+getCoeffAt i (BoundedPoly coeffs _ _)
+  | i >= 0 && i < V.length coeffs = coeffs V.! i
+  | otherwise                     = 0
 
--- | Get all (exponent, coefficient) pairs.
+-- | Constant-Time Masked scan: ALWAYS maxDeg+1 iterations, no early exit
+getCoeffAtCT :: Int -> BoundedPoly -> Integer
+getCoeffAtCT target (BoundedPoly coeffs _ _) =
+    V.ifoldl' (\acc i c ->
+        let cond = if i == target then 1 else 0
+        in acc + (c * cond + 0 * (1 - cond)) -- inline ctSelect
+    ) 0 coeffs
+
+-- | Get all non-zero (exponent, coefficient) pairs.
 polyCoefficients :: BoundedPoly -> [(Int, Integer)]
-polyCoefficients (BoundedPoly terms _ _) = map (\(Term c e) -> (e, c)) terms
+polyCoefficients (BoundedPoly coeffs _ _) = 
+  filter (\(_, c) -> c /= 0) $ V.toList (V.indexed coeffs)
+
+-- | Backward compatibility: get terms.
+polyTerms :: BoundedPoly -> [Term]
+polyTerms p = map (\(e, c) -> Term c e) (polyCoefficients p)
 
 -- ============================================================
 -- Permutation Groups

@@ -186,13 +186,14 @@ invertAffine cfg t poly =
 -- ============================================================
 
 applyPolySub :: ObfuscationConfig -> Transform -> BoundedPoly -> Either AlgebircError BoundedPoly
-applyPolySub cfg t (BoundedPoly terms maxDeg _) =
+applyPolySub cfg t poly =
   case transformPoly t of
     Just subPoly ->
       let p = cfgFieldPrime cfg
+          maxDeg = polyMaxDegree poly
           transformCoeff (Term c e) =
             Term (polyEval subPoly c) e
-      in Right $ mkBoundedPoly p maxDeg (map transformCoeff terms)
+      in Right $ mkBoundedPoly p maxDeg (map transformCoeff (polyTerms poly))
     Nothing -> Left (GenericError "Polynomial transform missing polynomial")
 
 -- ============================================================
@@ -200,16 +201,18 @@ applyPolySub cfg t (BoundedPoly terms maxDeg _) =
 -- ============================================================
 
 applyPermutation :: Transform -> BoundedPoly -> Either AlgebircError BoundedPoly
-applyPermutation t (BoundedPoly terms maxDeg fm) =
+applyPermutation t poly =
   case transformPerm t of
     Just perm ->
-      let n = permSize perm
+      let fm = polyField poly
+          maxDeg = polyMaxDegree poly
+          n = permSize perm
           -- Remap exponents: term at position i goes to position σ(i)
           transformTerm (Term c e) =
             if e < n
             then Term c (applyPerm perm e)
             else Term c e  -- leave terms beyond permutation size untouched
-      in Right $ mkBoundedPoly fm maxDeg (map transformTerm terms)
+      in Right $ mkBoundedPoly fm maxDeg (map transformTerm (polyTerms poly))
     Nothing -> Left (GenericError "Permutation transform missing permutation")
 
 invertPermutation :: Transform -> BoundedPoly -> Either AlgebircError BoundedPoly

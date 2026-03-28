@@ -1,62 +1,85 @@
-\section{The Algebraic Core: Finite Fields and Polynomial Rings}
-\label{sec:core}
+\section{Mathematical Preliminaries}
+\label{sec:preliminaries}
 
-The performance and mathematical strictness of \textsc{Algebirc} rely heavily on a custom algebraic core implemented natively within the \texttt{Algebirc.Core} module. This layer provides the necessary arithmetic infrastructure for operations over large prime fields ($GF(p)$) and related polynomial rings. Because cryptographic properties are rigidly maintained, every operation must guarantee asymptotic constant-time execution or complete immunity against hidden integer overflow vulnerabilities.
+This section establishes the formal cryptographic and algebraic foundations underpinning Algebirc. We introduce the Ring Learning With Errors (RLWE) problem, define the arithmetic of Genus-2 Hyperelliptic Curves via Mumford representation, and formally structure Richelot Isogenies.
 
-\subsection{Finite Field Arithmetic over $GF(p)$}
-All operations within \textsc{Algebirc} are executed entirely within the limits of the finite field $\GF{p}$, where $p$ is a large cryptographic prime (typically a 256-bit safe prime). We implement the base operations using highly optimized algorithms to support a massive, constant obfuscation throughput. The \texttt{Algebirc.Core.FiniteField} module provides the absolute foundation ensuring that elements never exceed the permissible system memory space or trigger generic Haskell bignum penalties.
+\subsection{Lattices and the RLWE Assumption}
+Let $R = \Z[x]/\langle \Phi_m(x) \rangle$ be the ring of integers of the $m$-th cyclotomic field, where $\Phi_m(x)$ is the $m$-th cyclotomic polynomial. For cryptographic efficiency, we restrict our focus to power-of-two cyclotomics where $m = 2N$ and $\Phi_m(x) = x^N + 1$. 
+Let $q \ge 2$ be a prime integer, and define the quotient ring $R_q = R / qR = \Z_q[x]/\langle x^N + 1 \rangle$.
 
-\subsubsection{Modular Inversion and the Extended GCD}
-Modular inversion is calculated using the Extended Euclidean Algorithm (EEA). For a field $\GF{p}$, every non-zero element $a$ posesses a unique inverse $a^{-1}$ such that $a \cdot a^{-1} \equiv 1 \pmod p$. In low-level hardware cryptographic implementations, Fermat inversion ($a^{p-2} \bmod p$) is frequently used to evade instruction branching side-channels. However, our mathematical ring-based iteration EEA guarantees linear computation time relative to the logarithm of the prime degree $p$, avoiding the massive exponentiation overhead.
-
-\begin{algorithm}[H]
-\caption{Extended Euclidean Algorithm for $GF(p)$}
-\begin{algorithmic}[1]
-\Procedure{extGCD}{$a, b$}
-    \If{$a = 0$} 
-        \State \Return $(b, 0, 1)$ 
-    \EndIf
-    \State $(g, x_1, y_1) \gets \textproc{extGCD}(b \bmod a, a)$
-    \State $x \gets y_1 - (b \div a) \cdot x_1$
-    \State $y \gets x_1$
-    \State \Return $(g, x, y)$
-\EndProcedure
-\end{algorithmic}
-\label{alg:extgcd}
-\end{algorithm}
-
-\subsection{Bounded Degree Polynomial Operators}
-The \texttt{BoundedPoly} data structure is explicitly designed to represent mathematical equations with an upper length statically enforced via the $\text{polyMaxDeg}$ bounds constraint. Adherence to this constraint is rigorously enforced: if the degree bounds shatter (e.g., during deep polynomial substitution sweeps in the quadratic Feistel steps), the evaluator immediately triggers a \textit{Degree Overflow} exception. 
-
-The internal mechanism in `Algebirc.Core.Polynomial` invariably invokes the normalization routine (the process of locating the dominant non-zero coefficient and dividing the matrix scale to establish a primary coefficient of 1, widely known as the \textit{monic form}) at every mathematical cycle (such as `polyAdd`, `polySub`, `polyMul`).
-
-\subsubsection{Scalable Polynomial Evaluator via Karatsuba $O(n^{1.58})$}
-As the matrix size dilates aggressively during sequential Richelot correspondences, naïve array multiplication routines construct an exponential computational blockade with a complexity scaling of $O(n^2)$. This effectively reduces genus-2 models to theoretical toys rather than production-grade obfuscants.
-
-To mature the framework into a viable cryptographic primitive, the foundation multiplier has been drastically upgraded using a pure Karatsuba Recursive Split Engine:
+\begin{definition}[Decisional RLWE Problem \cite{bv11}]
+Let $\chi$ be an error distribution over $R$, typically a discrete Gaussian distribution over the coefficients. Let $\sk \leftarrow \chi$ be a secret uniformly sampled from the error distribution. Let $\mathcal{O}_{\sk}$ be an oracle that outputs samples of the form $(a, b = a \cdot \sk + e \pmod q)$, where $a \leftarrow R_q$ is uniformly random and $e \leftarrow \chi$.
+The Decisional RLWE problem states that for any probabilistic polynomial-time (PPT) adversary $\mathcal{A}$, the advantage distinguishing a polynomial number of samples from $\mathcal{O}_{\sk}$ from uniformly random samples in $R_q \times R_q$ is negligible:
 \begin{equation}
-    A(x) \cdot B(x) = (A_1 x^m + A_0)(B_1 x^m + B_0)
+    \left| \Pr[\mathcal{A}(a_i, a_i \cdot \sk + e_i) = 1] - \Pr[\mathcal{A}(a_i, u_i) = 1] \right| \le \text{negl}(\kappa)
 \end{equation}
-This architecture recursively splinters below the threshold of contiguous memory via \texttt{Data.Vector.Unboxed} implementing native \texttt{V.splitAt} bindings.
-Instead of defaulting to the 4-phase conventional recursion, the interpolation of algorithmic cross-terms securely resolves modulo evaluations without scalar explosions:
-\begin{align}
-    Z_0 &= A_0 B_0 \\
-    Z_2 &= A_1 B_1 \\
-    Z_1 &= (A_0 + A_1)(B_0 + B_1) - Z_0 - Z_2
-\end{align}
-Yielding a final resultant vector frame of $Z_2 x^{2m} + Z_1 x^m + Z_0$. This native formulation guarantees an overhead reduction mapping to $O(n^{\log_2 3}) \approx O(n^{1.58})$, effectively obliterating exponential encoding latency boundaries by over $60\%$ for matrix depths exceeding $n=1024$. The differential fuzzing validation suite routinely proves $0\%$ algorithmic deviation across arbitrary bounds.
-
-\subsection{Sylvester Matrices and Symbolic Polynomial Substitution Determinants}
-The Resultant ($\Res(f, g)$) operates as the macroscopic centerpoint determining valid Richelot isogeny correspondences during Genus-2 transport. Its integer valuation is strictly zero if and only if $f$ and $g$ manifest an associative common root within the $\GF{p}$ algebraic closure space.
-
-Instead of directly projecting the complex grid space over the fragile $GF(p^2)$ extension field via standard $O(n^3)$ determinant extraction arrays, we formally define the \textbf{Sylvester Matrix} recursively scaled upon strict coefficient invariants:
-
-\begin{definition}[Sylvester Matrix]
-Given polynomial domains $f = \sum a_i x^i$ and $g = \sum b_i x^i$, the Sylvester matrix $S(f, g)$ resolves into an $(m+n) \times (m+n)$ contiguous block translating the diagonal footprint coefficients of $f$ and $g$. The exact Euclidean determinant isolates the numerical resultant.
+where $u_i \leftarrow R_q$ and $\kappa$ is the security parameter.
 \end{definition}
 
-Within our engine `Algebirc.Core.Resultant`, the resultant leverages a rigid Euclidean reduction displacement formula:
+In Algebirc, the encryption of a plaintext polynomial $m \in R_t$ (for a plaintext modulus $t \ll q$) under a symmetric key $\sk \in R_q$ is defined formally via a scaling factor $\Delta = \lfloor q/t \rfloor$.
+\begin{theorem}[Decryption Correctness]
+Given ciphertext $c = a \cdot \sk + e + \Delta \cdot m$, the decryption structure $\Dec(c, \sk)$ recovers $m$ if and only if the infinity norm of the error is bounded exactly by $\|e\|_{\infty} < \frac{\Delta}{2}$.
+\end{theorem}
+\begin{proof}
+    The decryption function evaluates the linear phase $c - a \cdot \sk \pmod q$. Substituting the encryption definition yields:
+    \begin{align*}
+        c - a \cdot \sk &= (a \cdot \sk + e + \Delta \cdot m) - a \cdot \sk \pmod q \\
+        &\equiv e + \Delta \cdot m \pmod q
+    \end{align*}
+    By dividing by $\Delta$ and rounding to the nearest integer field within $t$, we obtain:
+    \begin{equation*}
+        \lfloor \frac{e + \Delta \cdot m}{\Delta} \rceil = m + \lfloor \frac{e}{\Delta} \rceil \pmod t
+    \end{equation*}
+    Provided that $e \in [-\frac{\Delta}{2}, \frac{\Delta}{2})$, the division naturally resolves to zero, perfectly retrieving $m$.
+\end{proof}
+
+However, when non-linear operations are evaluated iteratively upon the ciphertext space, the magnitude of $e$ inflates geometrically. The phenomenon critically dictates the \textit{Multiplicative Depth Limit} of evaluating S-Boxes homomorphically without bootstrapping, birthing the foundation for our Decrypt-Compute-Reencrypt architecture.
+
+\subsection{Hyperelliptic Curves and Jacobian Arithmetic}
+A hyperelliptic curve $C$ of genus $g \ge 1$ over a finite field $\F_p$ is defined implicitly by an affine non-singular formulation. We confine our architecture strictly to $g=2$.
+
+\begin{definition}[Genus-2 Hyperelliptic Curve]
+A hyperelliptic curve $C$ over a field $\mathbb{K}$ (where char$(\mathbb{K}) \ne 2$) is given by the equation:
 \begin{equation}
-    \Res(f, g) = (-1)^{\deg f \cdot \deg g} \cdot \text{lc}(g)^{\deg f - \deg r} \cdot \Res(g, r)
+    C: y^2 = f(x)
 \end{equation}
-where $r = f \bmod g$. This mathematically reducible schema establishes the unshakeable foundation requisite for executing symbolic matrix evaluations straight across the polynomial ring space. It explicitly operates fully branchless, systematically neutering the notorious `Division By Zero` algorithmic landmine universally prevalent in high-degree Mumford divisor mapping projections.
+where $f(x) \in \mathbb{K}[x]$ is a monic polynomial of degree $2g+1 = 5$ with mutually distinct roots, ensuring non-singularity ($\Delta(f) \ne 0$).
+\end{definition}
+
+Unlike genus-1 elliptic curves whose points directly constitute an Abelian algebraic group under chord-and-tangent addition, the points on $C$ do not form a group natively. The group structure is instead localized on the \textbf{Jacobian Variety} of the curve, denoted $\J$.
+
+Elements of $\J$ represent equivalence classes of degree-zero divisors under principal divisor equivalence. In modern computation, these elements are uniquely determined by their \textbf{Mumford Representation} $\langle U(x), V(x) \rangle$, defined algorithmically as follows:
+\begin{enumerate}
+    \item $U(x) = \prod_{i=1}^r (x - x_i)$ is a monic polynomial where bounded degree $r \le g$. The roots $x_i$ project the $x$-coordinates of the points in the support sequence.
+    \item $V(x)$ is a bounding mapping polynomial where $\deg(V) < \deg(U)$, constructed such that $V(x_i) = y_i$, interpolating the corresponding $y$-coordinates.
+    \item The congruence constraint requires that $f(x) - V(x)^2 \equiv 0 \pmod{U(x)}$.
+\end{enumerate}
+
+Addition of two divisors $D_1 = \langle u_1, v_1 \rangle$ and $D_2 = \langle u_2, v_2 \rangle$ in $\J$ is carried out flawlessly using \textbf{Cantor's Algorithm}. 
+\begin{algorithm}[H]
+\caption{Cantor's Algorithm for Jacobian Addition}\label{alg:cantor}
+\begin{algorithmic}[1]
+\Require Divisors $D_1 = \langle u_1, v_1 \rangle, D_2 = \langle u_2, v_2 \rangle$ on $\J$
+\Ensure Divisor $D_3 = D_1 \oplus D_2 = \langle u_3, v_3 \rangle$
+\State $d = \gcd(u_1, u_2, v_1 + v_2)$
+\State Find $s_1, s_2, s_3$ such that $d = s_1u_1 + s_2u_2 + s_3(v_1 + v_2)$
+\State $u' \gets \frac{u_1 u_2}{d^2}$
+\State $v' \gets \frac{s_1 u_1 v_2 + s_2 u_2 v_1 + s_3(v_1 v_2 + f)}{d} \pmod{u'}$
+\While{$\deg(u') > g$}
+    \State $u' \gets \frac{f - (v')^2}{u'}$ \Comment{Reduction Step}
+    \State $v' \gets -v' \pmod{u'}$
+\EndWhile
+\State \Return $D_3 = \langle u', v' \rangle$
+\end{algorithmic}
+\end{algorithm}
+
+Cantor's explicitly deterministic mapping ensures that scalar multiplication $[k]D$ can be performed leveraging standard double-and-add frameworks, a property pivotal to executing our \textit{Geometric Branchless Execution} (Section \ref{sec:architecture}).
+
+\subsection{Richelot Isogenies on Genus-2}
+An isogeny is formally a rational algebraic morphism $\phi: \J \to \mathcal{J}_{C'}$ between two algebraic groups that preserves the respective identities. While genus-1 isogenies rely heavily on V\'elu's formulas, our architecture obfuscates control flow via \textbf{Richelot Isogenies} for $g=2$.
+
+\begin{definition}[Richelot Map \cite{richelot}]
+Let $C: y^2 = G_1(x) G_2(x) G_3(x)$ where $G_1, G_2, G_3 \in \F_p[x]$ are quadratic polynomials. A Richelot isogeny defines a $(2,2)$-mapping to a target curve $C': y^2 = H_1(x) H_2(x) H_3(x)$, where $H_k$ are directly proportional to the scaled determinants of the geometric Jacobians across the $G_k$ roots.
+\end{definition}
+
+By evaluating scalar multipliers across distinct mapped Jacobians, the evaluator guarantees mathematically distinct obfuscated outputs, preserving strict bijectivity without explicit branching.

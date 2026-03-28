@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 -- |
 -- Module      : Algebirc.Core.FiniteField
 -- Description : Finite field GF(p) arithmetic
@@ -22,6 +23,9 @@ module Algebirc.Core.FiniteField
   , ffNeg
   , ffInv
   , ffPow
+    -- * Constant-Time Support
+  , ctInverse
+  , ctSelect
     -- * Construction
   , ffFromInteger
   , ffFromBytes
@@ -36,6 +40,7 @@ module Algebirc.Core.FiniteField
 
 import Algebirc.Core.Types
 import qualified Data.ByteString as BS
+import Data.Bits (shiftR, (.&.))
 
 -- ============================================================
 -- Construction
@@ -120,11 +125,27 @@ ffNeg (FieldElement v p) = mkFieldElement (p - v) p
 -- but we use extGcd for efficiency.
 ffInv :: FieldElement -> Either AlgebircError FieldElement
 ffInv (FieldElement 0 _) = Left DivisionByZero
-ffInv (FieldElement v p) =
-  let (g, x, _) = extGcd v p
-  in if g /= 1
-     then Left (InverseNotFound $ "gcd(" ++ show v ++ "," ++ show p ++ ") = " ++ show g)
-     else Right (mkFieldElement x p)
+ffInv (FieldElement v p) = Right $ mkFieldElement (ctInverse v p) p
+
+-- | Fermat: a^(p-2) mod p — fixed bitlength(p-2) iterations, always
+ctInverse :: Integer -> Integer -> Integer
+ctInverse a p = ctPowMod a (p - 2) p
+
+ctPowMod :: Integer -> Integer -> Integer -> Integer
+ctPowMod !base !e !m = go base e 1
+  where
+    go !b !exp !acc
+      | exp == 0  = acc          -- loop termination on PUBLIC value, OK
+      | otherwise =
+          let bit    = exp .&. 1                     -- public bit
+              mulAcc = (acc * b) `mod` m
+              -- arithmetic masking: no branching
+              newAcc = mulAcc * bit + acc * (1 - bit)
+              newB   = (b * b) `mod` m
+          in go newB (exp `shiftR` 1) newAcc
+
+ctSelect :: Integer -> Integer -> Integer -> Integer
+ctSelect !cond !a !b = a * cond + b * (1 - cond)
 
 -- | Division: a / b = a * b^(-1).
 ffDiv :: FieldElement -> FieldElement -> Either AlgebircError FieldElement

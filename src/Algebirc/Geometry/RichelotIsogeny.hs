@@ -293,7 +293,7 @@ richelotCorrespondenceMapping ctx (MumfordDiv u v p) =
             g2x = polyEval p g2 x
             aP_raw = polyNorm p (polyAdd p (scalePoly h1 g1x) (scalePoly h2 g2x))
             aP = polyMakeMonic p aP_raw
-        in if y == 0
+        in normalizeDiv $ if y == 0
            then MumfordDiv aP (V.singleton 0) p
            else let rhs1 = scalePoly h1 g1x
                     polyXminusX = iToV [x `mod` p, p - 1]

@@ -25,6 +25,7 @@ module Algebirc.Core.Polynomial
   , polyCompose
     -- * Evaluation
   , polyEval
+  , polyEvalCT
   , polyEvalField
     -- * Interpolation
   , lagrangeInterpolate
@@ -35,6 +36,8 @@ module Algebirc.Core.Polynomial
 
 import Algebirc.Core.Types
 import Algebirc.Core.FiniteField
+import qualified Data.Vector as V
+import Data.List (foldl')
 
 -- ============================================================
 -- Construction
@@ -64,13 +67,11 @@ linearPoly fieldMod maxDeg a b =
 -- ============================================================
 
 polyIsZero :: BoundedPoly -> Bool
-polyIsZero (BoundedPoly [] _ _) = True
-polyIsZero _                     = False
+polyIsZero p = polyDegree p == 0 && getCoeffAt 0 p == 0
 
 -- | Re-normalize (idempotent).
 polyNormalize :: BoundedPoly -> BoundedPoly
-polyNormalize (BoundedPoly terms maxDeg fieldMod) =
-  mkBoundedPoly fieldMod maxDeg terms
+polyNormalize p = p
 
 -- ============================================================
 -- Arithmetic
@@ -99,8 +100,11 @@ polySub a b =
 
 -- | Scalar multiplication.
 polyScale :: Integer -> BoundedPoly -> BoundedPoly
-polyScale s (BoundedPoly terms maxDeg fm) =
-  mkBoundedPoly fm maxDeg (map (\(Term c e) -> Term (s * c) e) terms)
+polyScale s poly =
+  let fm = polyField p
+      maxDeg = polyMaxDegree p
+      p = poly
+  in mkBoundedPoly fm maxDeg (map (\(Term c e) -> Term (s * c) e) (polyTerms poly))
 
 -- | Polynomial multiplication.
 -- Degree: deg(f * g) = deg(f) + deg(g).
@@ -155,15 +159,21 @@ karatsubaMul fm md a b =
 
 -- | Split polynomial into (low, high) parts at degree n.
 splitPoly :: Int -> BoundedPoly -> (BoundedPoly, BoundedPoly)
-splitPoly n (BoundedPoly terms md fm) =
-  let lowTerms = [ t | t@(Term _ e) <- terms, e < n ]
+splitPoly n poly =
+  let terms = polyTerms poly
+      fm = polyField poly
+      md = polyMaxDegree poly
+      lowTerms = [ t | t@(Term _ e) <- terms, e < n ]
       highTerms = [ Term c (e - n) | Term c e <- terms, e >= n ]
   in (mkBoundedPoly fm md lowTerms, mkBoundedPoly fm md highTerms)
 
 -- | Shift polynomial exponents by n: f(x) * x^n.
 shiftPoly :: Int -> BoundedPoly -> BoundedPoly
-shiftPoly n (BoundedPoly terms md fm) =
-  let newTerms = [ Term c (e + n) | Term c e <- terms, (e + n) <= md ]
+shiftPoly n poly =
+  let terms = polyTerms poly
+      fm = polyField poly
+      md = polyMaxDegree poly
+      newTerms = [ Term c (e + n) | Term c e <- terms, (e + n) <= md ]
   in mkBoundedPoly fm md newTerms
 
 -- | Polynomial composition: f(g(x)).
@@ -213,18 +223,17 @@ polyPower g e fm md
 -- ============================================================
 
 -- | Evaluate polynomial at a point.
--- f(x) = ∑ c_i * x^e_i
--- Direct evaluation: compute each term and sum.
 polyEval :: BoundedPoly -> Integer -> Integer
-polyEval (BoundedPoly [] _ _) _ = 0
-polyEval poly x =
-  let fm = polyField poly
-      evalTerm (Term c e) =
-        let xPow = if fm > 0 then powModInt x e fm else x ^ e
-            val  = c * xPow
+polyEval poly x = polyEvalCT poly x
+
+-- | Horner CT: ALwAYS maxDeg+1 steps, no early exit
+polyEvalCT :: BoundedPoly -> Integer -> Integer
+polyEvalCT (BoundedPoly coeffs maxDeg fm) x =
+    foldl' (\acc i ->
+        let c = coeffs V.! i
+            val = acc * x + c
         in if fm > 0 then val `mod` fm else val
-      total = sum (map evalTerm (polyTerms poly))
-  in if fm > 0 then ((total `mod` fm) + fm) `mod` fm else total
+    ) 0 [maxDeg, maxDeg-1 .. 0]
 
 -- | Modular exponentiation for polynomial evaluation.
 powModInt :: Integer -> Int -> Integer -> Integer

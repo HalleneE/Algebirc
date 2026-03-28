@@ -1,95 +1,107 @@
 #include <stdint.h>
 #include <string.h>
 
+// 256-bit representation using 4 x 64-bit limbs
+// LSB is limb[0], MSB is limb[3]
 typedef uint64_t u256_t[4];
 
-// Fully unrolled 256-bit addition to prevent loop-induced branches
+uint64_t u256_add_ct(u256_t r, const u256_t a, const u256_t b);
+uint64_t u256_sub_ct(u256_t r, const u256_t a, const u256_t b);
+void u256_select_ct(u256_t r, uint64_t cond, const u256_t a, const u256_t b);
+
+#ifndef __x86_64__
+
+// Constant-Time 256-bit addition
+// Computes r = a + b, returns carry out (0 or 1)
 uint64_t u256_add_ct(u256_t r, const u256_t a, const u256_t b) {
-    uint64_t sum, carry = 0;
-    
-    sum = a[0] + b[0] + carry;
-    carry = (sum < a[0]) | ((sum == a[0]) & carry);
-    r[0] = sum;
-
-    sum = a[1] + b[1] + carry;
-    carry = (sum < a[1]) | ((sum == a[1]) & carry);
-    r[1] = sum;
-
-    sum = a[2] + b[2] + carry;
-    carry = (sum < a[2]) | ((sum == a[2]) & carry);
-    r[2] = sum;
-
-    sum = a[3] + b[3] + carry;
-    carry = (sum < a[3]) | ((sum == a[3]) & carry);
-    r[3] = sum;
-
+    uint64_t carry = 0;
+    for (int i = 0; i < 4; i++) {
+        uint64_t sum = a[i] + b[i] + carry;
+        // Overflow logic:
+        // if sum < a[i] (or sum < b[i] if carry=0) -> overflow
+        carry = (sum < a[i]) | ((sum == a[i]) & carry);
+        r[i] = sum;
+    }
     return carry;
 }
 
-// Fully unrolled 256-bit subtraction
+// Constant-Time 256-bit subtraction
+// Computes r = a - b, returns borrow out (0 or 1)
 uint64_t u256_sub_ct(u256_t r, const u256_t a, const u256_t b) {
-    uint64_t diff, borrow = 0;
-
-    diff = a[0] - b[0] - borrow;
-    borrow = (a[0] < b[0]) | ((a[0] == b[0]) & borrow);
-    r[0] = diff;
-
-    diff = a[1] - b[1] - borrow;
-    borrow = (a[1] < b[1]) | ((a[1] == b[1]) & borrow);
-    r[1] = diff;
-
-    diff = a[2] - b[2] - borrow;
-    borrow = (a[2] < b[2]) | ((a[2] == b[2]) & borrow);
-    r[2] = diff;
-
-    diff = a[3] - b[3] - borrow;
-    borrow = (a[3] < b[3]) | ((a[3] == b[3]) & borrow);
-    r[3] = diff;
-
+    uint64_t borrow = 0;
+    for (int i = 0; i < 4; i++) {
+        uint64_t diff = a[i] - b[i] - borrow;
+        // Borrow logic:
+        // if a[i] < b[i] or (a[i] == b[i] and borrow == 1)
+        borrow = (a[i] < b[i]) | ((a[i] == b[i]) & borrow);
+        r[i] = diff;
+    }
     return borrow;
 }
 
-// Fully unrolled Constant-Time Selection
+// Constant-Time Selection
+// cond must be strictly 0 or 1.
+// If cond == 1, r = a; If cond == 0, r = b;
 void u256_select_ct(u256_t r, uint64_t cond, const u256_t a, const u256_t b) {
     uint64_t mask = -cond; // 0xFFF...FFF if cond=1, 0x000...000 if cond=0
     uint64_t nmask = ~mask;
-    r[0] = (a[0] & mask) | (b[0] & nmask);
-    r[1] = (a[1] & mask) | (b[1] & nmask);
-    r[2] = (a[2] & mask) | (b[2] & nmask);
-    r[3] = (a[3] & mask) | (b[3] & nmask);
+    for (int i = 0; i < 4; i++) {
+        r[i] = (a[i] & mask) | (b[i] & nmask);
+    }
 }
 
-// Fully unrolled Constant-Time Equality
+#endif // __x86_64__
+
+// Constant-Time Equality
+// Returns 1 if a == b, else 0
 uint64_t u256_eq_ct(const u256_t a, const u256_t b) {
-    uint64_t diff = (a[0] ^ b[0]) | (a[1] ^ b[1]) | (a[2] ^ b[2]) | (a[3] ^ b[3]);
+    uint64_t diff = 0;
+    for (int i = 0; i < 4; i++) {
+        diff |= (a[i] ^ b[i]);
+    }
+    // IsZero trick: if diff is 0, -diff doesn't borrow, MSB stays 0.
+    // If diff != 0, diff | -diff has MSB set to 1.
     return 1 - ((diff | (0 - diff)) >> 63);
 }
 
+// Constant-Time Modular Addition
+// Computes r = (a + b) mod m
 void u256_modadd_ct(u256_t r, const u256_t a, const u256_t b, const u256_t m) {
     u256_t sum, diff;
     uint64_t carry = u256_add_ct(sum, a, b);
+    
+    // We compute diff = sum - m.
     uint64_t borrow = u256_sub_ct(diff, sum, m);
+    
+    // If carry == 1, sum > 2^256 > m, so we MUST subtract m (take diff).
+    // If carry == 0, if borrow == 1, sum < m, so we keep sum.
+    // So we select sum if (carry == 0 && borrow == 1). Otherwise diff.
     uint64_t cond_keep_sum = (1 ^ carry) & borrow;
+    
     u256_select_ct(r, cond_keep_sum, sum, diff);
 }
 
+// Constant-Time Modular Subtraction
+// Computes r = (a - b) mod m
 void u256_modsub_ct(u256_t r, const u256_t a, const u256_t b, const u256_t m) {
     u256_t diff, corrected;
     uint64_t borrow = u256_sub_ct(diff, a, b);
+    
+    // If borrow == 1, a < b, so we must add m to the negative result.
     u256_add_ct(corrected, diff, m);
+    
+    // Select corrected if borrow == 1, else diff.
     u256_select_ct(r, borrow, corrected, diff);
 }
 
-// Unrolled outer loop of Montgomery Mul
+// Montgomery Multiplication: r = (a * b * R^-1) mod m
+// Requires: m is odd, m0_inv = -m[0]^-1 mod 2^64
+// This is CIOS (Coarsely Integrated Operand Scanning) method.
 void u256_mont_mul_ct(u256_t r, const u256_t a, const u256_t b, const u256_t m, uint64_t m0_inv) {
     uint64_t t[5] = {0};
     
-    // Using GCC extensions to strictly inline unrolled blocks to avoid loop branches.
-    #pragma GCC unroll 4
     for (int i = 0; i < 4; i++) {
         uint64_t carry = 0;
-        
-        #pragma GCC unroll 4
         for (int j = 0; j < 4; j++) {
             unsigned __int128 prod = (unsigned __int128)a[i] * b[j] + t[j] + carry;
             t[j] = (uint64_t)prod;
@@ -102,7 +114,6 @@ void u256_mont_mul_ct(u256_t r, const u256_t a, const u256_t b, const u256_t m, 
         unsigned __int128 prod0 = (unsigned __int128)q * m[0] + t[0] + carry;
         carry = (uint64_t)(prod0 >> 64);
         
-        #pragma GCC unroll 3
         for (int j = 1; j < 4; j++) {
             unsigned __int128 prod = (unsigned __int128)q * m[j] + t[j] + carry;
             t[j-1] = (uint64_t)prod;
@@ -120,14 +131,16 @@ void u256_mont_mul_ct(u256_t r, const u256_t a, const u256_t b, const u256_t m, 
     u256_select_ct(r, cond_keep_t, t, diff);
 }
 
+// Constant-Time Exponentiation: r = (base^exp) mod m
+// Operates in Montgomery domain. 
+// base_mont must ALREADY be in Montgomery form (base * R mod m).
+// mont_one is R mod m (which is 1 in Montgomery form).
 void u256_modpow_ct(u256_t r, const u256_t base_mont, const u256_t exp, const u256_t m, uint64_t m0_inv, const u256_t mont_one) {
     u256_t t_res;
     memcpy(t_res, mont_one, sizeof(u256_t));
     u256_t t_base;
     memcpy(t_base, base_mont, sizeof(u256_t));
 
-    // GCC usually compiles a fixed 256 for loop efficiently, but we enforce it
-    // because unrolling 256 completely is too large for icache.
     for (int i = 0; i < 256; i++) {
         int limb = i / 64;
         int bit  = i % 64;
@@ -136,18 +149,23 @@ void u256_modpow_ct(u256_t r, const u256_t base_mont, const u256_t exp, const u2
         u256_t res_mul;
         u256_mont_mul_ct(res_mul, t_res, t_base, m, m0_inv);
         
+        // If bit is 1, keep multiplied result. Otherwise keep previous result.
         u256_select_ct(t_res, b, res_mul, t_res);
         
+        // Square the base for next bit
         u256_mont_mul_ct(t_base, t_base, t_base, m, m0_inv);
     }
     
     memcpy(r, t_res, sizeof(u256_t));
 }
 
+// Constant-Time Modular Inversion (Fermat's Little Theorem)
+// Computes r = a^(m-2) mod m.
+// m MUST be a prime.
 void u256_modinv_ct(u256_t r, const u256_t a_mont, const u256_t m, uint64_t m0_inv, const u256_t mont_one) {
     u256_t exp;
     u256_t two = {2, 0, 0, 0};
-    u256_sub_ct(exp, m, two);
+    u256_sub_ct(exp, m, two); // exp = m - 2
     
     u256_modpow_ct(r, a_mont, exp, m, m0_inv, mont_one);
 }

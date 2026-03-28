@@ -97,8 +97,9 @@ hashToFieldElement p hashBs = mkFieldElement (hashToInteger hashBs `mod` p) p
 
 -- | Extract polynomial coefficients as a list of integers.
 serializeBlock :: BoundedPoly -> [Integer]
-serializeBlock (BoundedPoly terms _ _) =
-  concatMap (\(Term c e) -> [c, fromIntegral e]) terms
+serializeBlock poly =
+  let terms = polyTerms poly
+  in concatMap (\(Term c e) -> [c, fromIntegral e]) terms
 
 -- | Convert a Digest to [Word8].
 digestToWord8s :: H.Digest H.SHA256 -> [Word8]
