@@ -35,6 +35,7 @@ import Algebirc.Core.FiniteField
 import Algebirc.Core.Polynomial
 import Algebirc.Core.Group
 import Algebirc.Obfuscation.Encoder (EncodedBlock(..))
+import qualified Algebirc.Obfuscation.NonlinearTransform as NLT
 
 -- ============================================================
 -- Transform Construction
@@ -50,7 +51,6 @@ mkAffineTransform a b = Transform
   , transformA      = Just a
   , transformB      = Just b
   , transformSubs   = []
-  , transformSBox   = Nothing
   , transformExp    = Nothing
   , transformRounds = 0
   , transformKey    = Nothing
@@ -70,7 +70,6 @@ mkPolyTransform poly = Transform
   , transformA      = Nothing
   , transformB      = Nothing
   , transformSubs   = []
-  , transformSBox   = Nothing
   , transformExp    = Nothing
   , transformRounds = 0
   , transformKey    = Nothing
@@ -89,7 +88,6 @@ mkPermTransform perm = Transform
   , transformA      = Nothing
   , transformB      = Nothing
   , transformSubs   = []
-  , transformSBox   = Nothing
   , transformExp    = Nothing
   , transformRounds = 0
   , transformKey    = Nothing
@@ -108,7 +106,6 @@ mkCompositeTransform ts = Transform
   , transformA      = Nothing
   , transformB      = Nothing
   , transformSubs   = ts
-  , transformSBox   = Nothing
   , transformExp    = Nothing
   , transformRounds = 0
   , transformKey    = Nothing
@@ -126,27 +123,25 @@ mkCompositeTransform ts = Transform
 -- The transform operates on each coefficient independently
 -- (substitution cipher over GF(p)).
 applyTransform :: ObfuscationConfig -> Transform -> BoundedPoly -> Either AlgebircError BoundedPoly
-applyTransform cfg t poly = case transformTag t of
-  AffineTransform      -> applyAffine cfg t poly
-  PolynomialTransform  -> applyPolySub cfg t poly
-  PermutationTransform -> applyPermutation t poly
-  CompositeTransform   -> applyPipeline cfg (transformSubs t) poly
-  SBoxTransform        -> Left (GenericError "S-box transform: use NonlinearTransform module")
-  FeistelTransform     -> Left (GenericError "Feistel transform: use NonlinearTransform module")
-  PowerMapTransform    -> Left (GenericError "Power map transform: use NonlinearTransform module")
-  ARXDiffusionTransform -> Left (GenericError "ARX diffusion: use NonlinearTransform module")
+applyTransform cfg t poly = 
+  case transformTag t of
+    AffineTransform      -> applyAffine cfg t poly
+    PolynomialTransform  -> applyPolySub cfg t poly
+    PermutationTransform -> applyPermutation t poly
+    CompositeTransform   -> applyPipeline cfg (transformSubs t) poly
+    PowerMapTransform    -> NLT.applyNonlinear cfg t poly
+    ARXDiffusionTransform -> NLT.applyNonlinear cfg t poly
 
 -- | Invert a transform (recover original data).
 invertTransform :: ObfuscationConfig -> Transform -> BoundedPoly -> Either AlgebircError BoundedPoly
-invertTransform cfg t poly = case transformTag t of
-  AffineTransform      -> invertAffine cfg t poly
-  PolynomialTransform  -> Left (GenericError "Polynomial transform inversion requires lookup table")
-  PermutationTransform -> invertPermutation t poly
-  CompositeTransform   -> invertPipeline cfg (transformSubs t) poly
-  SBoxTransform        -> Left (GenericError "S-box inversion: use NonlinearTransform module")
-  FeistelTransform     -> Left (GenericError "Feistel inversion: use NonlinearTransform module")
-  PowerMapTransform    -> Left (GenericError "Power map inversion: use NonlinearTransform module")
-  ARXDiffusionTransform -> Left (GenericError "ARX inversion: use NonlinearTransform module")
+invertTransform cfg t poly = 
+  case transformTag t of
+    AffineTransform      -> invertAffine cfg t poly
+    PolynomialTransform  -> Left (GenericError "Polynomial transform inversion requires lookup table")
+    PermutationTransform -> invertPermutation t poly
+    CompositeTransform   -> invertPipeline cfg (transformSubs t) poly
+    PowerMapTransform    -> NLT.invertNonlinear cfg t poly
+    ARXDiffusionTransform -> NLT.invertNonlinear cfg t poly
 
 -- ============================================================
 -- Affine Transform: x → a*x + b (mod p)
@@ -162,11 +157,11 @@ applyAffine cfg t poly =
     (Just a, Just b) ->
       let p = cfgFieldPrime cfg
           maxDeg = polyMaxDegree poly
-          -- Fill ALL positions up to degree cap — prevents data loss
-          -- when chaining transforms (degree can't shrink between steps)
-          coeffAt i = getCoeffAt i poly
-          newTerms = [ Term (((a * coeffAt i) + b) `mod` p) i
-                     | i <- [0 .. maxDeg] ]
+          -- If bias b is 0, we can just transform existing terms to save space/degree
+          -- CRITICAL: Use polyTerms to only get non-zero terms
+          newTerms = if b == 0
+                     then [ Term ((a * c) `mod` p) e | Term c e <- polyTerms poly ]
+                     else [ Term (((a * getCoeffAt i poly) + b) `mod` p) i | i <- [0 .. maxDeg] ]
       in Right $ mkBoundedPoly p maxDeg newTerms
     _ -> Left (GenericError "Affine transform missing a or b")
 
@@ -180,9 +175,9 @@ invertAffine cfg t poly =
            Right aInv ->
              let aInvVal = feValue aInv
                  maxDeg = polyMaxDegree poly
-                 coeffAt i = getCoeffAt i poly
-                 newTerms = [ Term ((aInvVal * (coeffAt i - b + p)) `mod` p) i
-                            | i <- [0 .. maxDeg] ]
+                 newTerms = if b == 0
+                            then [ Term ((aInvVal * c) `mod` p) e | Term c e <- polyTerms poly ]
+                            else [ Term ((aInvVal * (getCoeffAt i poly - b + p)) `mod` p) i | i <- [0 .. maxDeg] ]
              in Right $ mkBoundedPoly p maxDeg newTerms
     _ -> Left (GenericError "Affine transform missing a or b")
 

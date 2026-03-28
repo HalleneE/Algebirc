@@ -96,8 +96,6 @@ transformTagStr t = case transformTag t of
   PolynomialTransform  -> "PolySub"
   PermutationTransform -> "Permut"
   CompositeTransform   -> "Compos"
-  SBoxTransform        -> "S-Box"
-  FeistelTransform     -> "Feistl"
   PowerMapTransform    -> "PwrMap"
   ARXDiffusionTransform -> "ARXDif"
 

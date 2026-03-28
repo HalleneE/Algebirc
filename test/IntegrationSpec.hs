@@ -150,18 +150,6 @@ pipelineSpec = describe "Obfuscation Pipeline" $ do
                     decoded `shouldBe` original
       Left err -> expectationFailure $ "Parse failed: " ++ err
 
-  it "obfuscateSource works on parsed module" $ do
-    let src = "module Obf where\nsquare x = x * x"
-    case parseHaskellSource src of
-      Right pr -> do
-        res <- obfuscateSource cfg src (prModule pr)
-        case res of
-          Left err -> expectationFailure $ "Obfuscation error: " ++ show err
-          Right od -> do
-            length (odBlocks od) `shouldSatisfy` (>= 1)
-            smName (odModule od) `shouldBe` "Obf"
-      Left err -> expectationFailure $ "Parse failed: " ++ err
-
   it "file obfuscation round-trip" $ do
     let src = "module FileRT where\nfoo x = x + 1"
         inputPath = "/tmp/algebirc_test_input.hs"
@@ -185,10 +173,12 @@ pipelineSpec = describe "Obfuscation Pipeline" $ do
         deobfResult <- deobfuscateFile cfg metaPath recoveredPath
         case deobfResult of
           Left err -> expectationFailure $ "Deobfuscate error: " ++ err
-          Right recovered -> do
+          Right _ -> do
+            -- Cek file hasil deobfuscate
+            recoveredStr <- readFile recoveredPath
             -- Source asli harus sama
-            recovered `shouldContain` "module FileRT where"
-            recovered `shouldContain` "foo x = x + 1"
+            recoveredStr `shouldContain` "module FileRT where"
+            recoveredStr `shouldContain` "foo x = x + 1"
 
         -- Cleanup
         mapM_ (\f -> doesFileExist f >>= \e -> if e then removeFile f else return ())

@@ -93,12 +93,6 @@ composeMatrix p n current t = case transformTag t of
         in map permCol current
       Nothing -> current
 
-  -- S-Box: nonlinear → zero linear component (treated as random)
-  SBoxTransform -> zeroMatrix n
-
-  -- Feistel: nonlinear → near-zero linear component
-  FeistelTransform -> zeroMatrix n
-
   -- Power map: nonlinear → zero linear component for e > 1
   PowerMapTransform ->
     case transformExp t of
@@ -245,7 +239,7 @@ isVulnerable transforms =
 recommendation :: [Transform] -> String
 recommendation transforms
   | isVulnerable transforms =
-      "Add nonlinear layers (S-Box, Feistel, PowerMap) to resist linearization"
+      "Add more nonlinear layers (PowerMap, MDS) to resist linearization"
   | otherwise =
       "Pipeline has sufficient nonlinear depth — no immediate action needed"
 

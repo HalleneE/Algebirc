@@ -25,6 +25,7 @@ module Algebirc.Obfuscation.Encoder
 import Algebirc.Core.Types
 import Algebirc.Obfuscation.AST
 import qualified Data.ByteString as BS
+import Data.Word (Word8)
 import Data.Char (ord, chr)
 import Crypto.Random (getRandomBytes)
 
@@ -143,42 +144,49 @@ decodeModule em =
 -- ============================================================
 
 -- | Encode a string stream into exactly maxDeg-sized blocks with True OS Random padding.
-encodeStream :: ObfuscationConfig -> String -> IO [EncodedBlock]
-encodeStream cfg srcStr = do
-  let bytes = map (fromIntegral . ord) srcStr
-      p = cfgFieldPrime cfg
+encodeStream :: ObfuscationConfig -> BS.ByteString -> IO [EncodedBlock]
+encodeStream cfg srcBytes = do
+  let p = cfgFieldPrime cfg
       maxDeg = cfgMaxDegree cfg
       blockSize = maxDeg + 1
 
-  let chunkList [] = return []
-      chunkList bs = do
-        let (chunk, rest) = splitAt blockSize bs
-        if length chunk == blockSize
-          then do
+  let chunkList bs 
+        | BS.null bs = return []
+        | BS.length bs == blockSize = do
+            return [bs]
+        | BS.length bs > blockSize = do
+            let (chunk, rest) = BS.splitAt blockSize bs
             rest' <- chunkList rest
             return (chunk : rest')
-          else do
-            let padLen = blockSize - length chunk
+        | otherwise = do
+            let padLen = blockSize - BS.length bs
             padBytes <- getRandomBytes padLen :: IO BS.ByteString
-            let padInts = map fromIntegral (BS.unpack padBytes)
-            return [chunk ++ padInts]
+            return [bs `BS.append` padBytes]
 
-  chunks <- chunkList bytes
-  let makeBlock idx chunk =
-        let terms = zipWith (\b i -> Term b i) chunk [0 .. maxDeg]
+  chunks <- chunkList srcBytes
+  let makeBlock idx chunkBs =
+        let chunk = map fromIntegral (BS.unpack chunkBs)
+            terms = zipWith (\b i -> Term b i) chunk [0 .. maxDeg]
             poly = mkBoundedPoly p maxDeg terms
         in EncodedBlock poly blockSize idx
   return $ zipWith makeBlock [0..] chunks
 
 -- | Decode blocks and truncate to original length (binning the toxic padding).
-decodeStream :: ObfuscationConfig -> [EncodedBlock] -> Int -> String
+decodeStream :: ObfuscationConfig -> [EncodedBlock] -> Int -> BS.ByteString
 decodeStream cfg blocks origLen =
   let p = cfgFieldPrime cfg
       decodeOne (EncodedBlock poly _ _) =
         [ getCoeffAt i poly | i <- [0 .. cfgMaxDegree cfg] ]
       allBytes = concatMap decodeOne blocks
       validBytes = take origLen allBytes
-  in map (chr . fromIntegral . (`mod` 256)) validBytes
+      
+      -- Prevent Silent Overflow! If there is a number >= 256, it's mathematical corruption
+      safeFromIntegral :: Integer -> Word8
+      safeFromIntegral x 
+        | x > 255   = error $ "Mathematical Corruption: Coefficient out of Word8 bounds detected (" ++ show x ++ ")"
+        | otherwise = fromIntegral x
+        
+  in BS.pack (map safeFromIntegral validBytes)
 
 -- ============================================================
 -- Helpers

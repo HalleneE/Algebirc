@@ -12,16 +12,18 @@
 
 > *"A Program Is A Polynomial. A Polynomial Is A Path. A Path Has No Origin. When the Path Fails, the Dimension Closes."*
 
-**Algebirc** is an experimental, post-quantum algebraic obfuscation framework. It takes raw programmatic logic (or any byte stream) and mathematically transforms it into equivalent operations over finite fields $GF(p)$, embedding the computation inside layered algebraic structures on **Genus-2 Hyperelliptic Curves**.
+**Algebirc** is an experimental symmetric cryptographic obfuscation system based on an Isogeny-SPN construction. It takes raw programmatic logic (or any byte stream) and mathematically transforms it into equivalent operations over finite fields $GF(p)$, embedding the computation inside layered algebraic structures on **Genus-2 Hyperelliptic Curves** This work explores the use of algebraic geometry as a diffusion mechanism within symmetric cryptographic constructions, with a focus on obfuscation-oriented applications.
 
-Unlike traditional obfuscators that rely on junk code, AST manipulation, or virtualization—which are easily dismantled by SMT Solvers (e.g., z3) and Symbolic Execution (e.g., angr)—Algebirc relies on **pure geometry and combinatorial explosion**. It shifts the security perimeter from syntactic heuristics to the rigorous mathematical hardness of the **Group Action Inverse Problem (GAIP)** and **Gröbner Basis Deflation**.
+Unlike traditional obfuscators that rely on junk code, AST manipulation, or virtualization—which are easily dismantled by SMT Solvers (e.g., z3) and Symbolic Execution (e.g., angr)—Algebirc relies on **structured algebraic transformations and high algebraic complexity**. It shifts the security perimeter from syntactic heuristics to the high algebraic complexity and increased resistance to known classes of algebraic cryptanalysis, particularly those based on algebraic extraction such as **Gröbner basis methods**.
 
 ## Core Architecture
 
-Algebirc introduces a paradigm shift in anti-reverse-engineering: **Dimensional Disorientation**. It does not merely hide code; it traps analysis tools in a recursive geometric labyrinth.
+Algebirc introduces a paradigm shift in anti-reverse-engineering: **Dimensional Disorientation**. It does not merely hide code; it significantly increases the complexity of automated analysis by embedding computation within layered geometric transformations.
 
 ### 1. The Genus-2 Richelot Walk
-Data is mapped to *Mumford Divisors* on the Jacobian variety $J_\mathcal{C}$ of a Genus-2 hyperelliptic curve. The program execution is then forced to "walk" across a sequence of $(2,2)$-Richelot Isogenies. While theoretically every step multiplies the underlying polynomial degree by 4 (creating an illusory expansion of $2^{40}$ after 20 steps), Algebirc executes dynamic **Modular Degree Reductions** (Bounded Polynomials). This forces static analyzers (like Gröbner basis solvers) to confront an NP-Hard unbounding problem, while the engine executes seamlessly in $O(n \log n)$ time.
+Data is mapped to *Mumford Divisors* on the Jacobian variety $J_\mathcal{C}$ of a Genus-2 hyperelliptic curve. The program execution is then forced to "walk" across a sequence of $(2,2)$-Richelot Isogenies. Coefficient vectors are transported through the isogeny chain via **Igusa invariant mixing**: the endpoint invariants $(J_2, J_4, J_6, J_{10})$ of the Richelot walk are used to additively mask each coefficient position, coupling the algebraic geometry of the curve to the encoded data. All polynomial degrees are hard-capped via **Bounded Polynomial Arithmetic** (degree cap = 64): all operations are *coefficient-wise* over $GF(p)$, preventing degree blow-up while ensuring the engine executes in $O(n \log n)$ time via Karatsuba multiplication.
+
+> **Research Note (prototype):** The current implementation uses $GF(257)$ (the smallest prime $> 256$) as a proof-of-concept. For production-strength security, upgrading to a 256-bit prime field is required — this is a *documented prototype limitation*, not a design flaw.
 
 ### 2. Scalable Karatsuba-based Polynomial Evaluator
 Executing highly dense polynomial block multiplications natively incurs $O(n^2)$ computational cost. Algebirc fundamentally resolves this via a recursive $O(n^{1.58})$ Karatsuba Optimizer written natively over contiguous Unboxed/Boxed Vectors. This prevents invisible truncations when managing giant cryptographic primes (256-bit modulo) and allows the engine to handle massive polynomial degrees required by the Richelot steps efficiently.
@@ -36,7 +38,7 @@ The dimensions of your program are permanently obscured. If a data block is smal
 Default seeds are dead. Algebirc derives its Isogeny pathing via PBKDF2 (10,000 rounds of SHA256) keyed by a user passphrase. Without the exact passphrase, the generated Initial Vector (IV) and Richelot parameters will misalign, causing the engine to reconstruct corrupted, pseudo-random byte streams that fail to parse or execute.
 
 ### 6. Adversarial Oracle & Red-Teaming (Analysis Suite)
-Algebirc does not blindly trust its math. The engine ships with an internal `AlgebraicLeakage` and `AdversarialOracle` suite. During compilation, it autonomously attacks itself to measure Gaussian Rank Inference, Strict Avalanche Criterion (SAC), and Gröbner Basis complexity. It statically guarantees that its own output matrices are impervious to Subspace Attacks.
+Algebirc does not blindly trust its math. The engine ships with an internal `AlgebraicLeakage` and `AdversarialOracle` suite. During compilation, it autonomously attacks itself to measure Gaussian Rank Inference, Strict Avalanche Criterion (SAC), and Gröbner Basis complexity. It evaluates its own output matrices to to estimate algebraic complexity and diffusion properties.
 
 ---
 
@@ -72,8 +74,8 @@ cabal run algebirc -- deobfuscate output_obfuscated.hs.meta recovered.hs --genus
 
 ## Security Model & Threat Landscape
 
-**Designed To Obliterate:**
-- **SMT Solvers & Symbolic Execution:** Systems like `angr` or `z3` will crash via Out-Of-Memory (OOM) attempting to linearize the illusory $2^{40}$ degree polynomial expansions hidden behind the modulo bounding.
+**Designed to resist:**
+- **SMT Solvers & Symbolic Execution:** Systems like `angr` or `z3` face a coupling of multiple algebraic layers (Feistel network ∘ Power Map ∘ S-box ∘ Igusa invariant mixing) operating over genus-2 geometry. The absence of a correctness oracle (no padding errors, no syntax failures) eliminates the feedback loop these tools depend on.
 - **Traffic / Size Analysis:** Toxic Padding ensures all outputs look identical in structure and magnitude regardless of input size.
 
 **Not Designed To Provide:**

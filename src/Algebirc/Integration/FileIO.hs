@@ -1,6 +1,6 @@
 -- |
 -- Module      : Algebirc.Integration.FileIO
--- Description : File-level obfuscation/deobfuscation pipeline with Isogeny-CBC
+-- Description : File-level universal binary obfuscator with Isogeny-CBC
 -- License     : MIT
 
 module Algebirc.Integration.FileIO
@@ -8,8 +8,8 @@ module Algebirc.Integration.FileIO
     obfuscateFile
   , processFile
   , deobfuscateFile
-    -- * In-Memory Pipeline
-  , obfuscateSource
+    -- * Core Processing
+  , obfuscateBlob
   , deobfuscateData
     -- * Pipeline Construction
   , defaultPipeline
@@ -18,19 +18,16 @@ module Algebirc.Integration.FileIO
   ) where
 
 import Algebirc.Core.Types
-import Algebirc.Obfuscation.AST
 import Algebirc.Obfuscation.Encoder
 import Algebirc.Obfuscation.Transform
-import Algebirc.Obfuscation.NonlinearTransform (generatePipeline, applyNonlinear)
+import Algebirc.Obfuscation.NonlinearTransform (generatePipeline)
 import Algebirc.Obfuscation.Pipeline
   ( ObfuscationPipeline(..), buildPipeline, runPipelinePoly, invertPipelinePoly, plAlgTransforms )
-import Algebirc.Integration.HaskellParser
-import Algebirc.Core.Group (generateFromSeed)
-import Data.Either (fromRight)
-import Control.Monad (foldM)
 import Data.List (isPrefixOf)
 import Crypto.Random (getRandomBytes)
 import qualified Data.ByteString as BS
+import System.Directory (getPermissions, setPermissions, executable, setOwnerExecutable)
+import System.FilePath (takeFileName)
 
 -- ============================================================
 -- Types
@@ -40,8 +37,8 @@ data ObfuscationData = ObfuscationData
   { odBlocks     :: ![(EncodedBlock, EncodedBlock)]  
   , odTransforms :: ![Transform]                      
   , odConfig     :: !ObfuscationConfig                
-  , odOrigSrc    :: !String                           
-  , odModule     :: !SourceModule                     
+  , odFilename   :: !String                           
+  , odIsExec     :: !Bool                     
   , odIV         :: !Integer
   , odOrigLen    :: !Int
   } deriving (Show)
@@ -52,14 +49,11 @@ data ObfuscationData = ObfuscationData
 
 processFile :: ObfuscationConfig -> FilePath -> IO (Either String ObfuscationData)
 processFile cfg inputPath = do
-  parseResult <- parseHaskellFile inputPath
-  case parseResult of
-    Left err -> return $ Left $ "Parse error: " ++ err
-    Right pr -> do
-      res <- obfuscateSource cfg (prOriginal pr) (prModule pr)
-      case res of
-        Left err -> return $ Left $ "Obfuscation error: " ++ show err
-        Right od -> return $ Right od
+  perms <- getPermissions inputPath
+  let isExec = executable perms
+      fname  = takeFileName inputPath
+  fileBytes <- BS.readFile inputPath
+  obfuscateBlob cfg fname isExec fileBytes
 
 obfuscateFile :: ObfuscationConfig -> FilePath -> FilePath -> IO (Either String ObfuscationData)
 obfuscateFile cfg inputPath outputPath = do
@@ -69,7 +63,7 @@ obfuscateFile cfg inputPath outputPath = do
     Right od -> do
       let polyData = formatObfuscatedData (odBlocks od)
           outputContent = unlines
-            [ "{- ALGEBIRC OBFUSCATED DATA"
+            [ "{- ALGEBIRC UNIVERSAL OBFUSCATED BLOB"
             , "   DO NOT EDIT MANUALLY"
             , ""
             , polyData
@@ -81,24 +75,54 @@ obfuscateFile cfg inputPath outputPath = do
       writeFile metaPath metaContent
       return $ Right od
 
-deobfuscateFile :: ObfuscationConfig -> FilePath -> FilePath -> IO (Either String String)
+deobfuscateFile :: ObfuscationConfig -> FilePath -> FilePath -> IO (Either String ())
 deobfuscateFile _cfg metaPath outputPath = do
   metaContent <- readFile metaPath
   case deserializeMetadata metaContent of
     Left err -> return $ Left $ "Metadata error: " ++ err
-    Right (cfg, iv, origLen, blocks) ->
+    Right (cfg, iv, origLen, isExec, blocks) ->
       case deobfuscateData cfg iv origLen blocks of
         Left err -> return $ Left $ "Deobfuscation error: " ++ show err
-        Right recovered -> do
-          writeFile outputPath recovered
-          return $ Right recovered
+        Right recoveredBytes -> do
+          BS.writeFile outputPath recoveredBytes
+          basePerms <- getPermissions outputPath
+          setPermissions outputPath (setOwnerExecutable isExec basePerms)
+          return $ Right ()
 
 -- ============================================================
--- In-Memory Pipeline (Flattened + OS Entropy Padding)
+-- In-Memory Universal Blob Processing
 -- ============================================================
 
-extractIV :: BoundedPoly -> Integer
-extractIV (BoundedPoly terms _ p) = sum (map termCoeff terms) `mod` p
+-- | Derive the chaining IV from an obfuscated polynomial.
+--
+-- Security rationale: instead of a linear sum of coefficients (trivially
+-- predictable), we evaluate the polynomial at two key-derived points and
+-- combine them nonlinearly. This makes IV(block_n) a quadratic function
+-- of the ciphertext coefficients, not a linear one.
+--
+-- extractIV(f) = (f(seed mod p) * f(seed+1 mod p)) mod p
+--
+-- where seed is the config seed. This is:
+--   1. Deterministic (same ciphertext + seed → same IV, required for deobfuscation)
+--   2. Nonlinear in coefficients (IV ≠ sum of coefficients)
+--   3. Pure (no IO required)
+extractIV :: ObfuscationConfig -> BoundedPoly -> Integer
+extractIV cfg (BoundedPoly terms maxDeg p) =
+  let seed = cfgSeed cfg
+      -- Evaluate poly at two seed-derived points
+      evalAt x = foldl (\acc (Term c e) -> (acc + c * powMod x (fromIntegral e) p) `mod` p) 0 terms
+      x0 = seed `mod` p
+      x1 = (seed + 1) `mod` p
+      v0 = evalAt x0
+      v1 = evalAt x1
+      -- Combine nonlinearly: product gives degree-2 mixing
+      combined = (v0 * v1 + v0 + 1) `mod` p  -- +1 prevents IV=0 when poly is zero
+  in combined
+  where
+    powMod _ 0 _ = 1
+    powMod base ex md
+      | even ex   = let h = powMod base (ex `div` 2) md in (h * h) `mod` md
+      | otherwise = (base * powMod base (ex - 1) md) `mod` md
 
 chainObfuscate :: ObfuscationConfig -> ObfuscationPipeline -> Integer -> [EncodedBlock] -> Either AlgebircError [(EncodedBlock, EncodedBlock)]
 chainObfuscate cfg pl iv0 blocks =
@@ -109,7 +133,7 @@ chainObfuscate cfg pl iv0 blocks =
             maskedTerms = map (\(Term c e) -> Term ((c + iv) `mod` p) e) terms
             maskedPoly = mkBoundedPoly p md maskedTerms
         obfPoly <- runPipelinePoly cfg pl maskedPoly
-        let nextIv = extractIV obfPoly
+        let nextIv = extractIV cfg obfPoly  -- nonlinear IV derivation
             obfBlock = b { ebPoly = obfPoly }
         rest <- go nextIv bs
         return ((b, obfBlock) : rest)
@@ -125,34 +149,34 @@ chainDeobfuscate cfg pl iv0 obfBlocks =
             unmaskedTerms = map (\(Term c e) -> Term ((c - iv) `mod` p) e) terms
             origPoly = mkBoundedPoly p md unmaskedTerms
             origBlock = ob { ebPoly = origPoly }
-            nextIv = extractIV (ebPoly ob)
+            nextIv = extractIV cfg (ebPoly ob)  -- derive same IV as during obfuscation
         rest <- go nextIv obs
         return (origBlock : rest)
   in go iv0 obfBlocks
 
-obfuscateSource :: ObfuscationConfig -> String -> SourceModule -> IO (Either AlgebircError ObfuscationData)
-obfuscateSource cfg origSrc sourceMod = do
+obfuscateBlob :: ObfuscationConfig -> String -> Bool -> BS.ByteString -> IO (Either String ObfuscationData)
+obfuscateBlob cfg fname isExec fileBytes = do
   case buildPipeline cfg of
-    Left err -> return (Left err)
+    Left err -> return (Left $ show err)
     Right pl -> do
-      blocks <- encodeStream cfg origSrc
+      blocks <- encodeStream cfg fileBytes
       ivBytes <- getRandomBytes 16 :: IO BS.ByteString
       let iv = foldl (\acc b -> acc * 256 + fromIntegral b) 0 (BS.unpack ivBytes)
       let transforms = plAlgTransforms pl
       case chainObfuscate cfg pl iv blocks of
-        Left err -> return (Left err)
+        Left err -> return (Left $ show err)
         Right blockPairs ->
           return $ Right ObfuscationData
             { odBlocks     = blockPairs
             , odTransforms = transforms
             , odConfig     = cfg
-            , odOrigSrc    = origSrc
-            , odModule     = sourceMod
+            , odFilename   = fname
+            , odIsExec     = isExec
             , odIV         = iv
-            , odOrigLen    = length origSrc
+            , odOrigLen    = BS.length fileBytes
             }
 
-deobfuscateData :: ObfuscationConfig -> Integer -> Int -> [EncodedBlock] -> Either AlgebircError String
+deobfuscateData :: ObfuscationConfig -> Integer -> Int -> [EncodedBlock] -> Either AlgebircError BS.ByteString
 deobfuscateData cfg iv origLen blocks = do
   pl <- buildPipeline cfg
   origBlocks <- chainDeobfuscate cfg pl iv blocks
@@ -167,8 +191,6 @@ defaultPipeline cfg =
   let seed = cfgSeed cfg
       sk = SecretKey
            { skSeed     = seed
-           , skRounds   = 4 
-           , skSBoxSeed = seed + 1
            , skPowerExp = 3
            }
   in case generatePipeline cfg sk of
@@ -182,8 +204,9 @@ defaultPipeline cfg =
 serializeMetadata :: ObfuscationData -> String
 serializeMetadata od =
   unlines
-    [ "-- Algebirc Obfuscation Metadata"
-    , "-- DO NOT EDIT"
+    [ "-- Algebirc Universal Metadata"
+    , "-- Origin File: " ++ odFilename od
+    , "-- Executable: " ++ show (odIsExec od)
     , "-- Field Prime: " ++ show (cfgFieldPrime (odConfig od))
     , "-- Max Degree: " ++ show (cfgMaxDegree (odConfig od))
     , "-- Seed: " ++ show (cfgSeed (odConfig od))
@@ -205,7 +228,7 @@ formatObfuscatedData blocks = unlines $ map fmtBlock blocks
           coeffs = polyCoefficients poly
       in "BLOCK " ++ show (ebBlockId obf) ++ ": " ++ show coeffs
 
-deserializeMetadata :: String -> Either String (ObfuscationConfig, Integer, Int, [EncodedBlock])
+deserializeMetadata :: String -> Either String (ObfuscationConfig, Integer, Int, Bool, [EncodedBlock])
 deserializeMetadata content =
   let ls = lines content
   in case break (== "---BEGIN OBFUSCATED BLOCKS---") ls of
@@ -218,6 +241,7 @@ deserializeMetadata content =
                  genus = extractGenus headerLines
                  iv = extractNum "-- CBC IV: " 0 headerLines
                  origLen = fromIntegral $ extractNum "-- Source Length: " 0 headerLines
+                 isExec = extractBool "-- Executable: " False headerLines
                  cfg = defaultConfig
                          { cfgFieldPrime = prime
                          , cfgMaxDegree  = maxDeg
@@ -225,7 +249,7 @@ deserializeMetadata content =
                          , cfgGenus      = genus
                          }
                  blocks = parseBlocks prime maxDeg blockLines
-             in Right (cfg, iv, origLen, blocks)
+             in Right (cfg, iv, origLen, isExec, blocks)
            _ -> Left "Missing ---END OBFUSCATED BLOCKS--- marker"
        _ -> Left "Missing ---BEGIN OBFUSCATED BLOCKS--- marker"
 
@@ -257,4 +281,10 @@ extractNum prefix def ls =
     (l:_) -> case reads (drop (length prefix) l) of
                [(n, _)] -> n
                _ -> def
+    [] -> def
+
+extractBool :: String -> Bool -> [String] -> Bool
+extractBool prefix def ls =
+  case filter (\l -> take (length prefix) l == prefix) ls of
+    (l:_) -> l == prefix ++ "True"
     [] -> def

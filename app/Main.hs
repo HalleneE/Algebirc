@@ -6,7 +6,7 @@ import Algebirc.Integration.FileIO
 import Algebirc.Analysis.Invertibility
 import Algebirc.Analysis.Leakage
 
-import System.IO (hFlush, stdout)
+import System.IO (hFlush, stdout, hPutStrLn, stderr)
 import Crypto.Hash (SHA256(..), hashWith)
 import qualified Data.ByteArray as BA
 import qualified Data.ByteString as BS
@@ -25,9 +25,26 @@ deriveSeed pass =
 promptPassword :: Maybe String -> IO String
 promptPassword (Just p) = return p
 promptPassword Nothing = do
-    putStr "Enter Obfuscation Passphrase: "
+    hPutStrLn stderr ""
+    hPutStrLn stderr "╔══════════════════════════════════════════════════════════╗"
+    hPutStrLn stderr "║  ⚠  SECURITY WARNING: No --password flag provided!       ║"
+    hPutStrLn stderr "║                                                          ║"
+    hPutStrLn stderr "║  Proceeding without a passphrase will use the default    ║"
+    hPutStrLn stderr "║  seed (seed=42), which provides ZERO cryptographic       ║"
+    hPutStrLn stderr "║  security. Any adversary can reproduce the exact same    ║"
+    hPutStrLn stderr "║  S-box, Feistel keys, and isogeny path.                  ║"
+    hPutStrLn stderr "║                                                          ║"
+    hPutStrLn stderr "║  Use --password <pass> or -p <pass> for secure mode.     ║"
+    hPutStrLn stderr "╚══════════════════════════════════════════════════════════╝"
+    hPutStrLn stderr ""
+    putStr "Enter Obfuscation Passphrase (or press Enter to use insecure default): "
     hFlush stdout
-    getLine
+    input <- getLine
+    if null input
+      then do
+        hPutStrLn stderr "[!] Using default seed. Output is NOT cryptographically protected."
+        return "__DEFAULT_INSECURE_SEED_42__"
+      else return input
 
 parsePassword :: [String] -> (Maybe String, [String])
 parsePassword [] = (Nothing, [])

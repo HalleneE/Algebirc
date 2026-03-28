@@ -8,11 +8,117 @@ module Algebirc.Core.Matrix
   , matMulPoly
   , matDet2x2
   , matDet3x3
+  , FieldMatrix(..)
+  , mkCauchyMatrix
+  , matApplyField
+  , matMulField
+  , matInverseField
   ) where
 
 import Algebirc.Core.Types (Poly)
 import Algebirc.Geometry.HyperellipticCurve (polyAdd, polySub, polyMul)
+import Algebirc.Geometry.EllipticCurve (modInv)
 import qualified Data.Vector as V
+
+-- | Matrix over a Field GF(p). Stored in row-major order.
+data FieldMatrix = FieldMatrix
+  { fieldRows :: !Int
+  , fieldCols :: !Int
+  , fieldData :: !(V.Vector Integer)
+  } deriving (Show)
+
+-- | Matrix multiplication over GF(p).
+matMulField :: Integer -> FieldMatrix -> FieldMatrix -> FieldMatrix
+matMulField p (FieldMatrix r1 c1 d1) (FieldMatrix r2 c2 d2)
+  | c1 /= r2 = error "matMulField: dimension mismatch"
+  | otherwise =
+      let resData = V.generate (r1 * c2) $ \idx ->
+            let i = idx `div` c2
+                j = idx `mod` c2
+                dotProduct k acc = (acc + (d1 V.! (i * c1 + k)) * (d2 V.! (k * c2 + j))) `mod` p
+            in foldr dotProduct 0 [0 .. c1 - 1]
+      in FieldMatrix r1 c2 resData
+
+-- | Create a Cauchy MDS matrix A_{i,j} = 1 / (x_i + y_j) mod p.
+-- Requires x_i, y_j to be distinct and x_i + y_j != 0.
+mkCauchyMatrix :: Integer -> Int -> FieldMatrix
+mkCauchyMatrix p n =
+  let x = [0 .. fromIntegral n - 1]
+      y = [fromIntegral n .. 2 * fromIntegral n - 1]
+      resData = V.generate (n * n) $ \idx ->
+        let i = idx `div` n
+            j = idx `mod` n
+            val = (x !! i + y !! j) `mod` p
+        in modInv val p
+  in FieldMatrix n n resData
+
+-- | Apply matrix to vector: Y = M * X.
+matApplyField :: Integer -> FieldMatrix -> [Integer] -> [Integer]
+matApplyField p (FieldMatrix r c d) v
+  | c /= length v = error "matApplyField: dimension mismatch"
+  | otherwise =
+      [ foldl (\acc k -> (acc + (d V.! (i * c + k)) * (v !! k)) `mod` p) 0 [0 .. c - 1]
+      | i <- [0 .. r - 1] ]
+
+-- | Compute matrix inverse over GF(p) using Gaussian elimination.
+matInverseField :: Integer -> FieldMatrix -> Either String FieldMatrix
+matInverseField p (FieldMatrix n n1 d)
+  | n /= n1 = Left "Matrix must be square"
+  | otherwise = 
+      let -- Augment with identity
+          aug = V.generate (n * 2 * n) $ \idx ->
+            let r = idx `div` (2 * n)
+                c = idx `mod` (2 * n)
+            in if c < n 
+               then d V.! (r * n + c)
+               else if c - n == r then 1 else 0
+          
+          -- Gaussian elimination
+          solve r currentAug
+            | r == n = Right currentAug
+            | otherwise =
+                let -- Find pivot
+                    pivotRow = head $ [ pr | pr <- [r .. n - 1]
+                                     , (currentAug V.! (pr * 2 * n + r)) `mod` p /= 0 ] ++ [-1]
+                in if pivotRow == -1 
+                   then Left "Matrix is singular"
+                   else 
+                     let -- Swap rows
+                         swapped = if pivotRow == r then currentAug else swapRows r pivotRow currentAug
+                         -- Normalize pivot row
+                         pivotVal = swapped V.! (r * 2 * n + r)
+                         invPivot = modInv pivotVal p
+                         normalized = V.generate (n * 2 * n) $ \idx ->
+                           let row = idx `div` (2 * n)
+                               col = idx `mod` (2 * n)
+                           in if row == r 
+                              then (swapped V.! idx * invPivot) `mod` p
+                              else swapped V.! idx
+                         -- Eliminate other rows
+                         eliminated = V.generate (n * 2 * n) $ \idx ->
+                           let row = idx `div` (2 * n)
+                               col = idx `mod` (2 * n)
+                           in if row /= r 
+                              then let factor = normalized V.! (row * 2 * n + r)
+                                   in (normalized V.! idx - factor * (normalized V.! (r * 2 * n + col))) `mod` p
+                              else normalized V.! idx
+                     in solve (r + 1) eliminated
+                     
+          swapRows r1 r2 vec = V.generate (n * 2 * n) $ \idx ->
+            let r = idx `div` (2 * n)
+                c = idx `mod` (2 * n)
+            in if r == r1 then vec V.! (r2 * 2 * n + c)
+               else if r == r2 then vec V.! (r1 * 2 * n + c)
+               else vec V.! idx
+               
+      in case solve 0 aug of
+           Left err -> Left err
+           Right resAug -> 
+             let invData = V.generate (n * n) $ \idx ->
+                   let r = idx `div` n
+                       c = idx `mod` n
+                   in resAug V.! (r * 2 * n + (c + n))
+             in Right $ FieldMatrix n n invData
 
 -- | Matrix over GF(p)[x]. Stored in row-major order.
 data PolyMatrix = PolyMatrix

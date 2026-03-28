@@ -147,7 +147,7 @@ prop_smallFieldClosure =
 prop_rigorousIsogenyDual :: SquarefreeSextic -> Property
 prop_rigorousIsogenyDual (SquarefreeSextic f) =
   let p = 257
-      (g1, g2, g3) = factorSextic p f
+      (g1, g2, g3) = factorSextic p 42 f
       hc = case mkHyperCurve (vToI f) p of { Right c -> c; Left _ -> error "..." }
       
       testDiv = MumfordDiv (iToV [1]) (iToV [0]) p 
@@ -185,20 +185,28 @@ prop_karatsubaCorrect asList bsList =
        vToI resKara === vToI resNaive
 
 -- | 1. Non-identity stability: Non-trivial points heavily resist trivial collapse
+-- An Isogeny phi_K only maps D to Identity IF AND ONLY IF D is in the Kernel K.
+-- Otherwise, the mapping is stable and does not collapse.
 prop_nonIdentityStability :: SquarefreeSextic -> Property
 prop_nonIdentityStability (SquarefreeSextic f) =
   let p = 257
-      (g1, g2, g3) = factorSextic p f
+      (g1, g2, g3) = factorSextic p 42 f
       ctxForward = mkRichelotCtx p (g1, g2, g3)
   in forAll (genValidDivisor p f) $ \d ->
-       not (isIdentity d) ==> 
-         not (isIdentity (richelotEval ctxForward d))
+       let mapped = richelotEval ctxForward d
+           isKernel = (vToI (mdU d) == vToI g1) || (vToI (mdU d) == vToI g2) || (vToI (mdU d) == vToI g3)
+       in counterexample ("Divisor " ++ show d ++ " mapped to " ++ show mapped) $
+            if isIdentity d
+              then isIdentity mapped === True
+              else if isKernel
+                   then isIdentity mapped === True
+                   else isIdentity mapped === False
 
 -- | 2. Degree invariant: U final bounds absolutely
 prop_degreeInvariant :: SquarefreeSextic -> Property
 prop_degreeInvariant (SquarefreeSextic f) =
   let p = 257
-      (g1, g2, g3) = factorSextic p f
+      (g1, g2, g3) = factorSextic p 42 f
       ctxForward = mkRichelotCtx p (g1, g2, g3)
   in forAll (genValidDivisor p f) $ \d ->
        let (MumfordDiv u' _ _) = richelotEval ctxForward d
@@ -212,7 +220,7 @@ prop_groupLawConsistency :: SquarefreeSextic -> Property
 prop_groupLawConsistency (SquarefreeSextic f) =
   let p = 257
       hc = case mkHyperCurve (vToI f) p of { Right c -> c; Left e -> error e }
-      (g1, g2, g3) = factorSextic p f
+      (g1, g2, g3) = factorSextic p 42 f
       ctxForward = mkRichelotCtx p (g1, g2, g3)
       targetHC = richelotCorrespondenceTargetCurve ctxForward
       ctxDual = mkRichelotCtx p (ctxDualG1 ctxForward, ctxDualG2 ctxForward, ctxDualG3 ctxForward)
@@ -238,7 +246,7 @@ prop_groupLawConsistency (SquarefreeSextic f) =
 prop_kernelNullifies :: SquarefreeSextic -> Property
 prop_kernelNullifies (SquarefreeSextic f) =
   let p = 257
-      (g1, g2, g3) = factorSextic p f
+      (g1, g2, g3) = factorSextic p 42 f
       ctxForward = mkRichelotCtx p (g1, g2, g3)
       
       -- The kernel generators are exactly the supports of G1, G2, G3.

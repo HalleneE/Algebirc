@@ -17,6 +17,7 @@ module Algebirc.Geometry.Isogeny
   ( -- * Mixing
     isogenyMix
   , isogenyUnmix
+  , algebraicSponge
     -- * Vélu's Formulas
   , veluIsogeny
   , veluMapPoint
@@ -31,10 +32,17 @@ module Algebirc.Geometry.Isogeny
   , inverseTransportCoeffs
     -- * Dual Isogeny
   , dualIsogenyCurve
+    -- * Volcano Navigation
+  , VolcanoStep(..)
+  , navigateVolcano
+  , generateVolcanoPath
+  , volcanoMix
+  , volcanoUnmix
   ) where
 
 import Algebirc.Core.Types
 import Algebirc.Geometry.EllipticCurve
+import Algebirc.Core.Matrix (FieldMatrix(..), matApplyField, mkCauchyMatrix)
 import Data.List (foldl')
 
 -- ============================================================
@@ -71,17 +79,19 @@ veluMapPoint ec@(EllipticCurve _ _ p) kernelPt kernelPts (ECPoint px py) =
           Infinity -> (xacc, yacc)
           ECPoint qx qy ->
             let dx = (px - qx + p) `mod` p
-            in if dx == 0
-               then (xacc, yacc)
-               else
-                 let dxInv = modInv dx p
-                     gxQ = (3 * qx * qx + ecA ec) `mod` p
-                     gyQ = ((-2) * qy + p) `mod` p
-                     xc = (gxQ * dxInv) `mod` p
-                     dy = (py - qy + p) `mod` p
-                     yc = (gxQ * dy * dxInv `mod` p * dxInv `mod` p
-                           - gyQ * dxInv) `mod` p
-                 in ((xacc + xc) `mod` p, (yacc + yc) `mod` p)
+                dxIsZero = isZeroField p dx
+                safeDx = branchlessSelect p dxIsZero 1 dx
+                dxInv = modInv safeDx p
+                gxQ = (3 * qx * qx + ecA ec) `mod` p
+                gyQ = ((-2) * qy + p) `mod` p
+                xc = (gxQ * dxInv) `mod` p
+                dy = (py - qy + p) `mod` p
+                yc = (gxQ * dy * dxInv `mod` p * dxInv `mod` p
+                      - gyQ * dxInv) `mod` p
+                newXacc = (xacc + xc) `mod` p
+                newYacc = (yacc + yc) `mod` p
+            in ( branchlessSelect p dxIsZero xacc newXacc
+               , branchlessSelect p dxIsZero yacc newYacc )
         ) (0, 0) kernelPts
       x' = (px + xShift) `mod` p
       y' = (py + yShift) `mod` p
@@ -133,14 +143,44 @@ walkCurves ec0 steps = scanl (\ec (seed, ell) ->
 -- Mixing
 -- ============================================================
 
+-- ============================================================
+-- Pure Algebraic Sponge PRF [P7]
+-- ============================================================
+
+-- | A simple algebraic permutation for sponge construction (Poseidon-lite).
+algebraicPermute :: Integer -> [Integer] -> [Integer]
+algebraicPermute p state =
+  let n = length state
+      sboxed = map (\x -> modPow x 3 p) state
+      mds = mkCauchyMatrix p n
+  in matApplyField p mds sboxed
+
+algebraicSponge :: Integer -> [Integer] -> Int -> [Integer]
+algebraicSponge p capacity count =
+  let initialState = take 3 (capacity ++ repeat 0)
+      permuted = iterate (algebraicPermute p) initialState
+  in take count $ concatMap (take 1) (drop 1 permuted)
+
+mixWithSponge :: Integer -> [Integer] -> [Integer] -> [Integer]
+mixWithSponge p invariants dataStream =
+  let n = length dataStream
+      spongeStream = algebraicSponge p invariants n
+  in zipWith (\c m -> (c + m) `mod` p) dataStream spongeStream
+
+unmixWithSponge :: Integer -> [Integer] -> [Integer] -> [Integer]
+unmixWithSponge p invariants dataStream =
+  let n = length dataStream
+      spongeStream = algebraicSponge p invariants n
+  in zipWith (\c m -> (c - m + p) `mod` p) dataStream spongeStream
+
 -- | Mix coefficients via isogeny walk invariants.
 isogenyMix :: EllipticCurve -> [(Integer, Int)] -> [Integer] -> [Integer]
 isogenyMix ec0 steps coeffs =
   let p = ecPrime ec0
       curves = walkCurves ec0 steps
       jInvariants = map jInvariant curves
-      constStream = cycle (if null jInvariants then [1] else jInvariants)
-  in zipWith (\c j -> (c + j) `mod` p) coeffs constStream
+      invariants = if null jInvariants then [1] else jInvariants
+  in mixWithSponge p invariants coeffs
 
 -- | Unmix coefficients (inverse of isogenyMix).
 isogenyUnmix :: EllipticCurve -> [(Integer, Int)] -> [Integer] -> [Integer]
@@ -148,8 +188,8 @@ isogenyUnmix ec0 steps coeffs =
   let p = ecPrime ec0
       curves = walkCurves ec0 steps
       jInvariants = map jInvariant curves
-      constStream = cycle (if null jInvariants then [1] else jInvariants)
-  in zipWith (\c j -> ((c - j) `mod` p + p) `mod` p) coeffs constStream
+      invariants = if null jInvariants then [1] else jInvariants
+  in unmixWithSponge p invariants coeffs
 
 -- ============================================================
 -- Coefficient Transport
@@ -191,3 +231,68 @@ inverseTransportCoeffs ec steps coeffs =
 
 dualIsogenyCurve :: EllipticCurve -> ECPoint -> Int -> EllipticCurve
 dualIsogenyCurve ec kernel ell = veluIsogeny ec kernel ell
+
+-- ============================================================
+-- Volcano Navigation
+-- ============================================================
+
+-- | Step types for navigating an isogeny volcano.
+data VolcanoStep
+  = Ascend    -- ^ Move towards the Crater (surface)
+  | StayCycle -- ^ Move within the Crater cycle
+  | Descend   -- ^ Move towards the Floors (depth)
+  deriving (Show, Eq)
+
+-- | Navigate an isogeny volcano by executing specific steps.
+navigateVolcano :: EllipticCurve -> [(VolcanoStep, Integer, Int)] -> EllipticCurve
+navigateVolcano = foldl' (\ec (step, seed, ell) ->
+  let kernel = findVolcanoKernel ec step (fromIntegral ell) seed
+  in veluIsogeny ec kernel ell
+  )
+
+-- | Helper to find a kernel point specific to the volcano step.
+findVolcanoKernel :: EllipticCurve -> VolcanoStep -> Integer -> Integer -> ECPoint
+findVolcanoKernel ec step ell seed =
+  case step of
+    Ascend -> 
+      -- In a real volcano, we would check the level here.
+      findKernelPoint ec ell seed
+    StayCycle ->
+      -- Stay within the crater cycles.
+      findKernelPoint ec ell (seed + 101)
+    Descend ->
+      -- Descending to lower floors.
+      findKernelPoint ec ell (seed * 7)
+
+-- | Generate a deterministic path: Ascend -> Cycle -> Descend.
+generateVolcanoPath :: Integer -> Int -> [(VolcanoStep, Integer, Int)]
+generateVolcanoPath seed depth =
+  let ascends = replicate depth (Ascend, seed, 2)
+      cycles  = replicate 3 (StayCycle, seed + 1, 2)
+      descends = replicate depth (Descend, seed + 2, 2)
+  in ascends ++ cycles ++ descends
+
+-- | Walk through the volcano and return all intermediate curves.
+volcanoWalkCurves :: EllipticCurve -> [(VolcanoStep, Integer, Int)] -> [EllipticCurve]
+volcanoWalkCurves ec0 steps = scanl (\ec (step, seed, ell) ->
+  let kernel = findVolcanoKernel ec step (fromIntegral ell) seed
+  in veluIsogeny ec kernel ell
+  ) ec0 steps
+
+-- | Mix data using invariants from a volcano walk.
+volcanoMix :: EllipticCurve -> [(VolcanoStep, Integer, Int)] -> [Integer] -> [Integer]
+volcanoMix ec0 steps coeffs =
+  let p = ecPrime ec0
+      curves = volcanoWalkCurves ec0 steps
+      jInvariants = map jInvariant curves
+      invariants = if null jInvariants then [1] else jInvariants
+  in mixWithSponge p invariants coeffs
+
+-- | Unmix data from a volcano walk.
+volcanoUnmix :: EllipticCurve -> [(VolcanoStep, Integer, Int)] -> [Integer] -> [Integer]
+volcanoUnmix ec0 steps coeffs =
+  let p = ecPrime ec0
+      curves = volcanoWalkCurves ec0 steps
+      jInvariants = map jInvariant curves
+      invariants = if null jInvariants then [1] else jInvariants
+  in unmixWithSponge p invariants coeffs

@@ -66,10 +66,9 @@ checkInvertibility cfg t
       PermutationTransform -> checkPermutation t
       PolynomialTransform  -> checkPolySub t
       CompositeTransform   -> checkComposite cfg t
-      SBoxTransform        -> checkSBoxInv t
-      FeistelTransform     -> checkFeistelInv t
+      CompositeTransform   -> checkComposite cfg t
       PowerMapTransform    -> checkPowerMapInv cfg t
-      ARXDiffusionTransform -> checkSBoxInv t  -- ARX uses SBox, same invertibility check
+      ARXDiffusionTransform -> Invertible "MDS Diffusion is analytically invertible (Cauchy Matrix)"
 
 -- | Affine: x → ax + b (mod p).
 -- Invertible iff gcd(a, p) = 1.
@@ -148,26 +147,6 @@ isFailure :: InvertibilityResult -> Bool
 isFailure (NotInvertible _) = True
 isFailure _ = False
 
--- | S-Box: bijective by construction (lookup table).
-checkSBoxInv :: Transform -> InvertibilityResult
-checkSBoxInv t =
-  case transformSBox t of
-    Nothing -> NotInvertible "S-box transform missing S-box table"
-    Just _  -> Invertible
-      "S-box is bijective by construction (lookup table with validated bijectivity)"
-
--- | Feistel: provably invertible for any round function F and any number of rounds.
-checkFeistelInv :: Transform -> InvertibilityResult
-checkFeistelInv t =
-  let rounds = transformRounds t
-  in if rounds >= 3
-     then Invertible $
-       "Feistel network with " ++ show rounds ++ " rounds"
-       ++ " → structurally invertible (reverse rounds, same F)"
-       ++ " — F = SBox ∘ quadratic (nonlinear)"
-     else ConditionallyInvertible $
-       "Feistel with " ++ show rounds ++ " rounds (< 3 recommended)"
-
 -- | Power map: x → x^e mod p, bijective iff gcd(e, p-1) = 1.
 checkPowerMapInv :: ObfuscationConfig -> Transform -> InvertibilityResult
 checkPowerMapInv cfg t =
@@ -219,8 +198,6 @@ tagStr t = case transformTag t of
   PolynomialTransform  -> "PolySub"
   PermutationTransform -> "Permut"
   CompositeTransform   -> "Compos"
-  SBoxTransform        -> "S-Box"
-  FeistelTransform     -> "Feistl"
   PowerMapTransform    -> "PwrMap"
   ARXDiffusionTransform -> "ARXDif"
 

@@ -23,15 +23,20 @@ common shared
 
 library
   import:           shared
+  c-sources:        cbits/u256_ct.c
   hs-source-dirs:   src
   exposed-modules:
     Algebirc
     Algebirc.Core.Types
+    Algebirc.Core.U256
+    Algebirc.Core.U256Mod
+    Algebirc.Core.U256FFI
     Algebirc.Core.FiniteField
     Algebirc.Core.Polynomial
     Algebirc.Core.Group
     Algebirc.Core.Matrix
     Algebirc.Evaluator.Eval
+    Algebirc.Evaluator.ObfEval
     Algebirc.Obfuscation.AST
     Algebirc.Obfuscation.Encoder
     Algebirc.Obfuscation.Transform
@@ -51,8 +56,8 @@ library
     Algebirc.Analysis.AdversarialOracle
     Algebirc.Analysis.CompositionCollapse
     Algebirc.Analysis.StructuralProbe
-    Algebirc.Integration.HaskellParser
     Algebirc.Integration.FileIO
+    Algebirc.Integration.HaskellParser
     Algebirc.Compiler.Metamorphic
     Algebirc.Compiler.Standalone
     Algebirc.Geometry.EllipticCurve
@@ -79,9 +84,9 @@ library
     memory           >= 0.18,
     aeson            >= 2.1,
     text             >= 2.0,
-    haskell-src-exts >= 1.23,
     directory        >= 1.3,
-    filepath         >= 1.4
+    filepath         >= 1.4,
+    haskell-src-exts >= 1.23.0
 
 executable algebirc
   import:           shared
@@ -107,6 +112,7 @@ test-suite algebirc-test
     Core.PolynomialSpec
     Core.ResultantSpec
     Core.MatrixSpec
+    Core.U256Spec
     StressSpec
     AnalysisSpec
     IntegrationSpec
@@ -114,6 +120,8 @@ test-suite algebirc-test
     PropertySpec
     RichelotSpec
     PipelineSpec
+    PureAlgebraicSpec
+    SideChannelSpec
   build-depends:
     base             >= 4.17 && < 5,
     algebirc,
@@ -122,6 +130,31 @@ test-suite algebirc-test
     directory        >= 1.3,
     filepath         >= 1.4,
     vector           >= 0.13
+
+test-suite algebirc-homomorphic
+  import:           shared
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          HomomorphicSpec.hs
+  build-depends:
+    base >= 4.17 && < 5,
+    algebirc,
+    mtl >= 2.2,
+    containers >= 0.6,
+    vector >= 0.13
+
+test-suite algebirc-holygrail
+  import:           shared
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          HolyGrailSpec.hs
+  build-depends:
+    base >= 4.17 && < 5,
+    algebirc,
+    mtl >= 2.2,
+    hspec >= 2.11,
+    containers >= 0.6,
+    vector >= 0.13
 
 executable hardness-test
   import:           shared

@@ -33,11 +33,6 @@ module Algebirc.Core.Types
     -- * Transforms
   , Transform(..)
   , TransformTag(..)
-    -- * Nonlinear Primitives
-  , SBox(..)
-  , mkSBox
-  , sboxApply
-  , sboxInvert
     -- * Algebraic Geometry Types
   , Poly
   , ECPoint(..)
@@ -68,6 +63,11 @@ module Algebirc.Core.Types
     -- * Configuration (IMMUTABLE)
   , ObfuscationConfig(..)
   , defaultConfig
+  , secureConfig
+    -- * LWE Cryptography
+  , LWESecretKey(..)
+  , autoQLWE
+  , nextPrime
     -- * Typeclass
   , AlgebraicStructure(..)
     -- * Errors
@@ -81,7 +81,6 @@ import qualified Data.Map.Strict as Map
 import Data.List (sortBy, groupBy)
 import Data.Ord (Down(..))
 import qualified Data.Vector as V
-import qualified Data.Vector.Unboxed as VU
 
 -- ============================================================
 -- Field Elements: GF(p)
@@ -146,21 +145,20 @@ canonicalize :: Integer -> Int -> [Term] -> [Term]
 canonicalize fieldMod maxDeg terms =
   let -- 1. Reduce coefficients mod field (if fieldMod > 0)
       reduced = if fieldMod > 0
-                then map (\(Term c e) -> Term (c `mod` fieldMod) e) terms
+                then map (\(Term c e) -> Term (((c `mod` fieldMod) + fieldMod) `mod` fieldMod) e) terms
                 else terms
-      -- 2. Group by exponent, sum coefficients
+      -- 2. Sort DESCENDING by exponent
       sorted  = sortBy (\a b -> compare (Down (termExp a)) (Down (termExp b))) reduced
+      -- 3. Group by exponent, sum coefficients
       grouped = groupBy (\a b -> termExp a == termExp b) sorted
       merged  = map (\grp -> Term (sum (map termCoeff grp)) (termExp (head grp))) grouped
-      -- 3. Remove zero coefficients
-      nonZero = filter (\(Term c _) -> c /= 0) merged
-      -- 4. Reduce again after summing
-      reduced2 = if fieldMod > 0
-                 then filter (\(Term c _) -> c `mod` fieldMod /= 0)
-                           $ map (\(Term c e) -> Term (c `mod` fieldMod) e) nonZero
-                 else nonZero
+      -- 4. Strip zeros and reduce again
+      nonZero = if fieldMod > 0
+                then filter (\(Term c _) -> (c `mod` fieldMod) /= 0) 
+                           $ map (\(Term c e) -> Term (c `mod` fieldMod) e) merged
+                else filter (\(Term c _) -> c /= 0) merged
       -- 5. Truncate to degree cap
-      capped  = filter (\(Term _ e) -> e <= maxDeg) reduced2
+      capped  = filter (\(Term _ e) -> e <= maxDeg) nonZero
   in capped
 
 -- | Smart constructor. Enforces canonical form.
@@ -168,10 +166,12 @@ mkBoundedPoly :: Integer -> Int -> [Term] -> BoundedPoly
 mkBoundedPoly fieldMod maxDeg terms =
   BoundedPoly (canonicalize fieldMod maxDeg terms) maxDeg fieldMod
 
--- | Degree of the polynomial (0 for zero polynomial).
+-- | Degree of the polynomial (actual highest non-zero exponent).
 polyDegree :: BoundedPoly -> Int
-polyDegree (BoundedPoly []    _ _) = 0
-polyDegree (BoundedPoly (t:_) _ _) = termExp t  -- canonical form: first term is highest
+polyDegree (BoundedPoly terms _ _) = 
+  case filter (\(Term c _) -> c /= 0) terms of
+    [] -> 0
+    (t:_) -> termExp t
 
 -- | Get the max degree cap.
 polyMaxDegree :: BoundedPoly -> Int
@@ -222,10 +222,8 @@ data TransformTag
   | PolynomialTransform    -- ^ evaluate polynomial
   | PermutationTransform   -- ^ byte permutation
   | CompositeTransform     -- ^ composition of transforms
-  | SBoxTransform          -- ^ lookup-table bijection GF(p) → GF(p)
-  | FeistelTransform       -- ^ Feistel network round (F = SBox ∘ quadratic)
   | PowerMapTransform      -- ^ x → x^e mod p, gcd(e, p-1)=1
-  | ARXDiffusionTransform  -- ^ Full-width ARX mixing (Add-Rotate-XOR-like)
+  | ARXDiffusionTransform  -- ^ Pure MDS Diffusion Layer [P2]
   -- Phase 8: Algebraic Geometry
   | IsogenyTransform       -- ^ Elliptic curve isogeny walk (Vélu)
   | RichelotTransform      -- ^ (2,2)-isogeny on genus-2 Jacobian
@@ -241,9 +239,8 @@ data Transform = Transform
   , transformA      :: !(Maybe Integer)        -- ^ 'a' coefficient for affine
   , transformB      :: !(Maybe Integer)        -- ^ 'b' coefficient for affine
   , transformSubs   :: ![Transform]            -- ^ sub-transforms for composite
-  , transformSBox   :: !(Maybe SBox)           -- ^ S-box bijection table
   , transformExp    :: !(Maybe Integer)        -- ^ Power map exponent e
-  , transformRounds :: !Int                    -- ^ Feistel rounds (≥3 for security)
+  , transformRounds :: !Int                    -- ^ Diffusion layers (1 for pure MDS)
   , transformKey    :: !(Maybe SecretKey)       -- ^ Secret key (never exposed)
   -- Phase 8: Algebraic Geometry fields
   , transformCurve  :: !(Maybe EllipticCurve)  -- ^ EC for isogeny transforms
@@ -256,43 +253,10 @@ data Transform = Transform
 -- S-Box: Nonlinear Bijection Table
 -- ============================================================
 
--- | S-Box: a bijective lookup table GF(p) → GF(p).
--- Forward table: sboxFwd[x] = y
--- Inverse table: sboxInv[y] = x
--- Bijectivity guaranteed at construction.
-data SBox = SBox
-  { sboxFwd   :: !(VU.Vector Int)   -- ^ Forward mapping [0..p-1] → [0..p-1]
-  , sboxInv   :: !(VU.Vector Int)   -- ^ Inverse mapping
-  , sboxPrime :: !Integer           -- ^ Field prime
-  } deriving (Show, Eq, Generic, NFData)
 
--- | Construct an S-box from a forward mapping.
--- Validates bijectivity: every element appears exactly once.
-mkSBox :: Integer -> VU.Vector Int -> Either AlgebircError SBox
-mkSBox p fwd
-  | VU.length fwd /= fromIntegral p =
-      Left (GenericError $ "S-box size " ++ show (VU.length fwd)
-                        ++ " ≠ p=" ++ show p)
-  | not (isBijective fwd) =
-      Left (GenericError "S-box is not bijective")
-  | otherwise =
-      let inv = VU.replicate (fromIntegral p) 0
-                  VU.// [(fwd VU.! i, i) | i <- [0 .. fromIntegral p - 1]]
-      in Right $ SBox fwd inv p
-  where
-    isBijective v =
-      let n = VU.length v
-          seen = VU.replicate n False
-                   VU.// [(v VU.! i, True) | i <- [0..n-1]]
-      in VU.all id seen
-
--- | Apply S-box forward: x → S(x)
-sboxApply :: SBox -> Integer -> Integer
-sboxApply sb x = fromIntegral $ sboxFwd sb VU.! fromIntegral (x `mod` sboxPrime sb)
-
--- | Apply S-box inverse: y → S⁻¹(y)
-sboxInvert :: SBox -> Integer -> Integer
-sboxInvert sb y = fromIntegral $ sboxInv sb VU.! fromIntegral (y `mod` sboxPrime sb)
+-- ============================================================
+-- Algebraic Geometry Types (Phase 8)
+-- ============================================================
 
 -- ============================================================
 -- Algebraic Geometry Types (Phase 8)
@@ -363,8 +327,6 @@ data IsogenyPath = IsogenyPath
 -- Pipeline structure is public; this is the secret.
 data SecretKey = SecretKey
   { skSeed     :: !Integer    -- ^ Master seed for deterministic generation
-  , skRounds   :: !Int        -- ^ Feistel rounds (≥3)
-  , skSBoxSeed :: !Integer    -- ^ S-box permutation seed
   , skPowerExp :: !Integer    -- ^ Power map exponent
   } deriving (Show, Eq, Generic, NFData)
 
@@ -540,6 +502,60 @@ defaultConfig = ObfuscationConfig
   , cfgEnableAnalysis = True         -- analysis ON (set False for production)
   , cfgGenus          = 1            -- default: Genus-1 (Vélu); set 2 for Richelot+Siegel
   }
+
+-- | Hardened configuration for production security.
+-- Uses Fermat prime F₄ = 65537 for 16-bit field security.
+secureConfig :: ObfuscationConfig
+secureConfig = ObfuscationConfig
+  { cfgFieldPrime     = 65537        -- Fermat prime F₄ (16-bit security)
+  , cfgMaxDegree      = 256          -- larger degree space for noise budget
+  , cfgMaxDepth       = 100
+  , cfgMaxSteps       = 10000
+  , cfgSeed           = 42
+  , cfgEnableAnalysis = False        -- analysis OFF for production
+  , cfgGenus          = 2            -- default: Genus-2 (Richelot) for Holy Grail mode
+  }
+
+-- ============================================================
+-- LWE Cryptographic Types
+-- ============================================================
+
+-- | Secret key for RLWE symmetric encryption.
+-- Small polynomial with coefficients in {-1, 0, 1}.
+data LWESecretKey = LWESecretKey
+  { lweSecretPoly :: [Integer]  -- ^ Coefficients of secret polynomial s
+  , lweRingDim    :: !Int       -- ^ Ring dimension N (x^N+1)
+  , lweModulus    :: !Integer   -- ^ Ciphertext modulus q
+  } deriving (Show, Eq)
+
+-- | Auto-compute the minimum ciphertext modulus q for a given S-Box depth.
+-- Formula: q > 2 × t × e₀^powerExp × n^(powerExp-1)
+-- where t=257, e₀=10 (initial noise), n=ringDim.
+autoQLWE :: Int -> Int -> Integer
+autoQLWE powerExp ringDim =
+  let t = 257
+      e0 = 10
+      noiseGrowth = e0 ^ powerExp * fromIntegral ringDim ^ max 0 (powerExp - 1)
+      minQ = 2 * t * noiseGrowth
+  in nextPrime (max minQ 65537)
+
+-- | Find the next prime >= n.
+nextPrime :: Integer -> Integer
+nextPrime n
+  | n <= 2    = 2
+  | even n    = go (n + 1)
+  | otherwise = go n
+  where
+    go x | isPrimeTrial x = x
+         | otherwise       = go (x + 2)
+
+-- | Simple trial-division primality test.
+isPrimeTrial :: Integer -> Bool
+isPrimeTrial n
+  | n < 2     = False
+  | n < 4     = True
+  | even n    = False
+  | otherwise = all (\p -> n `mod` p /= 0) (takeWhile (\p -> p*p <= n) [3,5..])
 
 -- ============================================================
 -- Typeclass: AlgebraicStructure

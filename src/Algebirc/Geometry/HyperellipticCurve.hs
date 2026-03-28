@@ -29,6 +29,9 @@ module Algebirc.Geometry.HyperellipticCurve
   , polyMakeMonic
   , polyDeriv
   , polyResultant
+  , polyCoeff
+  , polyGCD
+  , polyPowMod
   , iToV
   , vToI
     -- * Jacobian Arithmetic (Cantor)
@@ -36,9 +39,11 @@ module Algebirc.Geometry.HyperellipticCurve
   , jacobianDouble
   , jacobianNegate
   , jacobianScalarMul
+  , jacobianScalarMulCT
   , jacobianIdentity
   , isIdentity
   , cantorReduce
+  , cantorReduceCT
   , cantorCompose
     -- * Divisor Invariants
   , validateDiv
@@ -46,10 +51,6 @@ module Algebirc.Geometry.HyperellipticCurve
     -- * Igusa Invariants
   , igusaInvariants
   , igusaClebsch
-    -- * Coefficient Routing
-  , coeffsToJacobian
-  , jacobianToCoeffs
-  , mixViaJacobian
   ) where
 
 import Algebirc.Core.Types
@@ -198,6 +199,24 @@ polyResultant p a b
 polyMod :: Integer -> Poly -> Poly -> Poly
 polyMod p num den = snd (polyDiv p num den)
 
+-- | Polynomial modular exponentiation: a(x)^e mod m(x) in GF(p).
+polyPowMod :: Integer -> Poly -> Integer -> Poly -> Poly
+polyPowMod p base e m
+  | e == 0    = V.singleton 1
+  | even e    = let half = polyPowMod p base (e `div` 2) m
+                in polyMod p (polyMul p half half) m
+  | otherwise = polyMod p (polyMul p base (polyPowMod p base (e - 1) m)) m
+
+-- | Polynomial Greatest Common Divisor.
+polyGCD :: Integer -> Poly -> Poly -> Poly
+polyGCD p a b =
+  let (g, _, _) = polyExtGCD p a b
+  in g
+
+-- | Extracts the i-th coefficient safely.
+polyCoeff :: Poly -> Int -> Integer
+polyCoeff poly i = if i >= 0 && i < V.length poly then poly V.! i else 0
+
 -- | Extended GCD.
 polyExtGCD :: Integer -> Poly -> Poly -> (Poly, Poly, Poly)
 polyExtGCD p a b
@@ -213,12 +232,14 @@ polyExtGCD p a b
           (g, s, t) = polyExtGCD p b r
       in (g, t, polySub p s (polyMul p q t))
 
--- | Evaluate polynomial at a point.
+-- | Evaluate polynomial at a point (Horner CT).
 polyEval :: Integer -> Poly -> Integer -> Integer
 polyEval p coeffs x =
-  V.foldl' (\acc (i, c) ->
-    (acc + c * modPow x (fromIntegral i) p) `mod` p
-  ) 0 (V.indexed coeffs)
+    let deg = V.length coeffs - 1
+    in foldl' (\acc i ->
+           let c = coeffs V.! i
+           in (acc * x + c) `mod` p
+       ) 0 [deg, deg-1 .. 0]
 
 -- | Make polynomial monic.
 polyMakeMonic :: Integer -> Poly -> Poly
@@ -305,6 +326,13 @@ cantorReduce :: HyperCurve -> MumfordDiv -> MumfordDiv
 cantorReduce hc@(HyperCurve fCoeffs g p) (MumfordDiv u v _)
   | polyDeg u <= g = MumfordDiv (polyMakeMonic p u) v p
   | otherwise =
+      let uNew_vNew = oneStepReduce hc (MumfordDiv u v p)
+      in if polyDeg (mdU uNew_vNew) >= polyDeg u
+         then uNew_vNew
+         else cantorReduce hc uNew_vNew
+
+oneStepReduce :: HyperCurve -> MumfordDiv -> MumfordDiv
+oneStepReduce hc@(HyperCurve fCoeffs g p) (MumfordDiv u v _) =
       let degF = polyDeg fCoeffs
           isEvenDegree = degF `mod` 2 == 0
           
@@ -333,9 +361,34 @@ cantorReduce hc@(HyperCurve fCoeffs g p) (MumfordDiv u v _)
          then jacobianIdentity p
          else let negV = polyNorm p $ V.map (\c -> (p - c) `mod` p) vAdj
                   vNew = polyMod p negV uNew
-              in if polyDeg uNew >= polyDeg u
-                 then MumfordDiv (polyMakeMonic p uNew) (polyNorm p vNew) p
-                 else cantorReduce hc (MumfordDiv (polyMakeMonic p uNew) (polyNorm p vNew) p)
+              in MumfordDiv (polyMakeMonic p uNew) (polyNorm p vNew) p
+
+ctSelect :: Integer -> Integer -> Integer -> Integer
+ctSelect cond a b = a * cond + b * (1 - cond)
+
+ctSelectPoly :: Integer -> Poly -> Poly -> Poly
+ctSelectPoly cond as bs =
+  let n = max (V.length as) (V.length bs)
+      as' = as V.++ V.replicate (n - V.length as) 0
+      bs' = bs V.++ V.replicate (n - V.length bs) 0
+  in V.zipWith (\x y -> ctSelect cond x y) as' bs'
+
+selectMumford :: Integer -> MumfordDiv -> MumfordDiv -> MumfordDiv
+selectMumford bit a b = MumfordDiv
+    (ctSelectPoly bit (mdU a) (mdU b))
+    (ctSelectPoly bit (mdV a) (mdV b))
+    (mdP a)
+
+-- Selalu jalankan one step, pilih hasil via mask
+cantorStepCT :: HyperCurve -> MumfordDiv -> MumfordDiv
+cantorStepCT h d =
+    let reduced = oneStepReduce h d       -- selalu dihitung
+        needReduce = if polyDeg (mdU d) > hcGenus h then 1 else 0
+    in selectMumford needReduce reduced d  -- pilih tanpa branch
+
+-- Fixed 2-step (genus=2 max butuh 2 iterasi)
+cantorReduceCT :: HyperCurve -> MumfordDiv -> MumfordDiv
+cantorReduceCT hc = cantorStepCT hc . cantorStepCT hc
 
 -- ============================================================
 -- Divisor Invariants & Validation
@@ -373,6 +426,26 @@ jacobianScalarMul hc n d
                 in jacobianDouble hc half
   | otherwise = jacobianAdd hc d (jacobianScalarMul hc (n - 1) d)
 
+-- | Explicit Constant-Time Montgomery Ladder for Jacobian Scalar Multiplication
+-- Guarantees the exact same macroscopic operation trace (1 Add, 1 Double per bit)
+-- irrespective of the scalar's Hamming weight or bit pattern.
+jacobianScalarMulCT :: Int -> HyperCurve -> Integer -> MumfordDiv -> MumfordDiv
+jacobianScalarMulCT bitWidth hc scalar d =
+    let r0 = jacobianIdentity (hcPrime hc)
+        r1 = d
+        -- Traverse bits from MSB to LSB
+        (res0, _) = foldl' step (r0, r1) (reverse [0..bitWidth - 1])
+    in res0
+  where
+    step (t0, t1) i =
+        let bit = (scalar `div` (2 ^ i)) `mod` 2
+            addR = jacobianAdd hc t0 t1
+            dbl0 = jacobianDouble hc t0
+            dbl1 = jacobianDouble hc t1
+            t0'  = selectMumford bit addR dbl0
+            t1'  = selectMumford bit dbl1 addR
+        in (t0', t1')
+
 -- ============================================================
 -- Igusa Invariants
 -- ============================================================
@@ -398,34 +471,6 @@ igusaClebsch hc =
   in (i1, i2, i3)
 
 -- ============================================================
--- Coefficient Routing via Jacobian
+-- End of Pure Hyperelliptic Geometry
 -- ============================================================
 
-coeffsToJacobian :: Integer -> [Integer] -> [MumfordDiv]
-coeffsToJacobian p coeffs =
-  let pairs = pairUp coeffs
-  in map (\(a, b) -> MumfordDiv (iToV [b `mod` p, a `mod` p, 1]) (V.singleton 0) p) pairs
-  where
-    pairUp [] = []
-    pairUp [x] = [(x, 0)]
-    pairUp (a:b:rest) = (a, b) : pairUp rest
-
-jacobianToCoeffs :: [MumfordDiv] -> [Integer]
-jacobianToCoeffs = concatMap (\(MumfordDiv u _ _) ->
-  let l = vToI u
-  in case l of
-    [b, a, _] -> [a, b]
-    [b, _]    -> [0, b]
-    [b]       -> [0, b]
-    _         -> [0, 0]
-  )
-
-mixViaJacobian :: HyperCurve -> [Integer] -> [Integer]
-mixViaJacobian hc coeffs =
-  let p = hcPrime hc
-      divs = coeffsToJacobian p coeffs
-      accum = foldl' (jacobianAdd hc) (jacobianIdentity p) divs
-      MumfordDiv u v _ = accum
-      mixU = polyEval p u 1
-      mixV = polyEval p v 1
-  in zipWith (\i c -> (c + mixU * fromIntegral i + mixV) `mod` p) [0 :: Int ..] coeffs

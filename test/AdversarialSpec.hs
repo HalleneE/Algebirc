@@ -18,7 +18,7 @@ testCfg :: ObfuscationConfig
 testCfg = defaultConfig { cfgFieldPrime = 257, cfgMaxDegree = 8, cfgEnableAnalysis = True }
 
 testKey :: SecretKey
-testKey = SecretKey { skSeed = 42, skRounds = 4, skSBoxSeed = 7, skPowerExp = 3 }
+testKey = SecretKey { skSeed = 42, skPowerExp = 3 }
 
 -- Dense polynomial
 densePoly :: BoundedPoly

@@ -75,12 +75,6 @@ maxDegreeAfterTransform t degIn = case transformTag t of
   CompositeTransform   ->
     foldl (\d sub -> maxDegreeAfterTransform sub d) degIn (transformSubs t)
 
-  -- S-Box: pointwise lookup — degree preserved
-  SBoxTransform        -> degIn
-
-  -- Feistel: L/R mixing — degree preserved (coefficient-level, not poly composition)
-  FeistelTransform     -> degIn
-
   -- Power map: x → x^e — operates on coefficients, not polynomial composition
   -- Degree preserved because we apply to coefficients independently
   PowerMapTransform    -> degIn
@@ -116,7 +110,5 @@ tagName AffineTransform      = "Affine"
 tagName PolynomialTransform  = "PolySub"
 tagName PermutationTransform = "Perm"
 tagName CompositeTransform   = "Composite"
-tagName SBoxTransform        = "S-Box"
-tagName FeistelTransform     = "Feistel"
 tagName PowerMapTransform    = "PowerMap"
 tagName ARXDiffusionTransform = "ARX"

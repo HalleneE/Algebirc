@@ -86,19 +86,6 @@ gateCountSingle cfg t =
       let subGates = map (gateCountSingle cfg) (transformSubs t)
       in (sum (map fst subGates), sum (map snd subGates))
 
-    -- S-Box: lookup table = 0 arithmetic gates in lookup model
-    -- But in circuit model, S-box requires O(p) comparisons ≈ O(p) gates
-    SBoxTransform        -> (n, 0)
-
-    -- Feistel: per round, F(x) = S(k*x² + x + k) = 1 mul + 2 add + S-box
-    -- For n/2 pairs × rounds
-    FeistelTransform     ->
-      let rounds = transformRounds t
-          pairs = n `div` 2
-          addPerRound  = pairs * 3  -- quadratic eval + L' = L + F
-          mulPerRound  = pairs * 1  -- k*x²
-      in (addPerRound * rounds, mulPerRound * rounds)
-
     -- Power map: x → x^e needs O(log e) multiplications per coefficient
     -- Total: n * ceil(log₂ e)
     PowerMapTransform    ->
@@ -131,8 +118,6 @@ circuitDepth = sum . map layerDepth
           Just poly -> polyDegree poly  -- Horner depth = degree
           Nothing   -> 0
       CompositeTransform   -> sum (map layerDepth (transformSubs t))
-      SBoxTransform        -> 1    -- lookup (constant depth)
-      FeistelTransform     -> transformRounds t * 3  -- 3 operations per round
       PowerMapTransform    ->
         case transformExp t of
           Just e  -> max 1 (ceiling (logBase 2 (fromIntegral (max 2 e) :: Double)) :: Int)
@@ -162,10 +147,6 @@ estimateANF cfg transforms =
             Just poly -> n * polyDegree poly  -- degree-d → n*d terms
             Nothing   -> n
         CompositeTransform   -> sum (map anfContrib (transformSubs t))
-        SBoxTransform        -> n * n      -- S-box: high nonlinearity → O(n²) ANF terms
-        FeistelTransform     ->
-          let rounds = transformRounds t
-          in n * rounds * 2               -- grows with rounds
         PowerMapTransform    ->
           case transformExp t of
             Just e  -> n * fromIntegral (min e 20)  -- bounded estimate
@@ -193,8 +174,6 @@ lowerBound transforms =
      then n * 3  -- minimum 3 gates per nonlinear layer
      else n      -- linear transforms: 1 gate each minimum
   where
-    isNonlinearTag SBoxTransform     = True
-    isNonlinearTag FeistelTransform  = True
     isNonlinearTag PowerMapTransform = True
     isNonlinearTag ARXDiffusionTransform = True
     isNonlinearTag _                 = False

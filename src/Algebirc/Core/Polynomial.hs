@@ -104,19 +104,67 @@ polyScale s (BoundedPoly terms maxDeg fm) =
 
 -- | Polynomial multiplication.
 -- Degree: deg(f * g) = deg(f) + deg(g).
--- Returns DegreeOverflow if result exceeds cap.
+-- Uses Karatsuba for large degrees (n > 32).
 polyMul :: BoundedPoly -> BoundedPoly -> Either AlgebircError BoundedPoly
 polyMul a b =
   let (fm, md) = checkCompat a b
-      resultDeg = polyDegree a + polyDegree b
+      da = polyDegree a
+      db = polyDegree b
+      resultDeg = da + db
   in if resultDeg > md
      then Left (DegreeOverflow resultDeg md)
-     else
-       let terms = [ Term (ca * cb) (ea + eb)
-                   | Term ca ea <- polyTerms a
-                   , Term cb eb <- polyTerms b
-                   ]
-       in Right (mkBoundedPoly fm md terms)
+     else if da < 32 || db < 32
+          then schoolbookMul fm md a b
+          else karatsubaMul fm md a b
+
+-- | Standard O(n^2) multiplication for small degrees.
+schoolbookMul :: Integer -> Int -> BoundedPoly -> BoundedPoly -> Either AlgebircError BoundedPoly
+schoolbookMul fm md a b =
+  let terms = [ Term (ca * cb) (ea + eb)
+              | Term ca ea <- polyTerms a
+              , Term cb eb <- polyTerms b
+              ]
+  in Right (mkBoundedPoly fm md terms)
+
+-- | Karatsuba multiplication O(n^1.58).
+karatsubaMul :: Integer -> Int -> BoundedPoly -> BoundedPoly -> Either AlgebircError BoundedPoly
+karatsubaMul fm md a b =
+  let n = (max (polyDegree a) (polyDegree b) + 1) `div` 2
+      -- A = a1 * x^n + a0
+      -- B = b1 * x^n + b0
+      (a0, a1) = splitPoly n a
+      (b0, b1) = splitPoly n b
+      
+      -- z2 = a1 * b1
+      -- z0 = a0 * b0
+      -- z1 = (a1 + a0)(b1 + b0) - z2 - z0
+  in do
+    z2 <- polyMul a1 b1
+    z0 <- polyMul a0 b0
+    
+    a10 <- return $ polyAdd a1 a0
+    b10 <- return $ polyAdd b1 b0
+    
+    z1_raw <- polyMul a10 b10
+    z1 <- return $ polySub (polySub z1_raw z2) z0
+    
+    -- Result = z2 * x^(2n) + z1 * x^n + z0
+    let res2 = shiftPoly (2 * n) z2
+        res1 = shiftPoly n z1
+    return $ polyAdd (polyAdd res2 res1) z0
+
+-- | Split polynomial into (low, high) parts at degree n.
+splitPoly :: Int -> BoundedPoly -> (BoundedPoly, BoundedPoly)
+splitPoly n (BoundedPoly terms md fm) =
+  let lowTerms = [ t | t@(Term _ e) <- terms, e < n ]
+      highTerms = [ Term c (e - n) | Term c e <- terms, e >= n ]
+  in (mkBoundedPoly fm md lowTerms, mkBoundedPoly fm md highTerms)
+
+-- | Shift polynomial exponents by n: f(x) * x^n.
+shiftPoly :: Int -> BoundedPoly -> BoundedPoly
+shiftPoly n (BoundedPoly terms md fm) =
+  let newTerms = [ Term c (e + n) | Term c e <- terms, (e + n) <= md ]
+  in mkBoundedPoly fm md newTerms
 
 -- | Polynomial composition: f(g(x)).
 -- Degree: deg(f ∘ g) = deg(f) * deg(g).
@@ -124,9 +172,13 @@ polyMul a b =
 -- __This is where degree explosion happens.__
 -- We check BEFORE computing and reject if it would overflow.
 polyCompose :: BoundedPoly -> BoundedPoly -> Either AlgebircError BoundedPoly
-polyCompose f g =
-  let (fm, md) = checkCompat f g
-      resultDeg = polyDegree f * max 1 (polyDegree g)
+polyCompose f_raw g_raw =
+  let f = polyNormalize f_raw
+      g = polyNormalize g_raw
+      (fm, md) = checkCompat f g
+      df = polyDegree f
+      dg = polyDegree g
+      resultDeg = df * dg
   in if resultDeg > md
      then Left (DegreeOverflow resultDeg md)
      else

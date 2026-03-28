@@ -31,16 +31,19 @@ module Algebirc.Geometry.RichelotIsogeny
   , richelotCorrespondenceTargetCurve
     -- * Factorization
   , factorSextic
-    -- * Coefficient Transport
-  , richelotTransport
-  , richelotInverseTransport
+  , findRootsPure
+    -- * Invisible Logic Gates
+  , deriveBranchContexts
+  , richelotEval
+    -- * Invoice Output
+  , evaluateGeometricSignature
   ) where
 
 import Algebirc.Core.Types
 import Algebirc.Geometry.EllipticCurve (modInv, modPow)
 import Algebirc.Geometry.HyperellipticCurve
 import Algebirc.Core.Matrix
-import Data.List (foldl')
+import Data.List (foldl', sortOn)
 import qualified Data.Vector as V
 import Debug.Trace (trace)
 
@@ -75,34 +78,87 @@ mkRichelotCtx p (g1, g2, g3) =
 -- Quadratic Factorization
 -- ============================================================
 
--- | Factor a sextic f(x) = G₁(x)·G₂(x)·G₃(x) into three quadratics.
--- Uses a deterministic splitting strategy based on root search in GF(p).
-factorSextic :: Integer -> Poly -> (Poly, Poly, Poly)
-factorSextic p coeffs =
-  let roots = findRoots p coeffs
-      (g1, g2, g3) = case roots of
-        (r1:r2:r3:r4:r5:r6:_) ->
-          ( buildQuadratic p r1 r2
-          , buildQuadratic p r3 r4
-          , buildQuadratic p r5 r6
-          )
-        (r1:r2:r3:r4:_) ->
-          ( buildQuadratic p r1 r2
-          , buildQuadratic p r3 r4
-          , syntheticQuadratic p coeffs r1 r2 r3 r4
-          )
-        _ ->
-          -- Fallback: synthetic factorization
-          let cs = vToI coeffs
-          in ( iToV $ take 3 (cs ++ repeat 0)
-             , iToV $ take 3 (drop 2 cs ++ repeat 0)
-             , iToV [1, 0, 1]  -- x² + 1
-             )
+-- | Factor a sextic f(x) = G1 * G2 * G3 over GF(p).
+-- Uses Cantor-Zassenhaus (P5) to find all factors (linear and quadratic).
+factorSextic :: Integer -> Integer -> Poly -> (Poly, Poly, Poly)
+factorSextic p seed coeffs =
+  let f_monic = polyMakeMonic p coeffs
+      -- 1. Get all linear factors (roots)
+      roots = findRootsPure p seed f_monic
+      rootPolys = map (\r -> iToV [p - r, 1]) roots
+      
+      -- 2. Remaining polynomial for degree-2 factors
+      rootsProd = foldl (polyMul p) (V.singleton 1) rootPolys
+      (f_rem, _) = polyDiv p f_monic rootsProd
+      
+      -- 3. Get all quadratic factors
+      quads = if polyDeg f_rem > 0 
+              then equalDegreeFactorization p (seed + 10) f_rem 2
+              else []
+      
+      -- 4. Combine into three quadratics
+      allFactors = groupToQuadratics p (rootPolys ++ quads)
+      
+      -- Helper: Group factors into exactly 3 quadratics
+      groupToQuadratics _ fs
+        | sum (map polyDeg fs) /= 6 = replicate 3 [iToV [1, 0, 1]] -- Should not happen for sextic
+        | otherwise = 
+            let sorted = reverse $ Data.List.sortOn polyDeg fs
+            in case sorted of
+                 -- 3 quadratics
+                 [q1, q2, q3] -> [[q1], [q2], [q3]]
+                 -- 2 quadratics, 2 linears
+                 [q1, q2, l1, l2] -> [[q1], [q2], [polyMul p l1 l2]]
+                 -- 1 quadratic, 4 linears
+                 [q1, l1, l2, l3, l4] -> [[q1], [polyMul p l1 l2], [polyMul p l3 l4]]
+                 -- 6 linears
+                 [l1, l2, l3, l4, l5, l6] -> [[polyMul p l1 l2], [polyMul p l3 l4], [polyMul p l5 l6]]
+                 -- Fallback for any other weird cases (e.g. higher degree irreducible)
+                 _ -> replicate 3 [iToV [1, 0, 1]] 
+
+      [g1, g2, g3] = map (foldl (polyMul p) (V.singleton 1)) allFactors
   in (g1, g2, g3)
 
--- | Find roots of polynomial f(x) in GF(p).
+-- | Pure Cantor-Zassenhaus root finding [P5].
+findRootsPure :: Integer -> Integer -> Poly -> [Integer]
+findRootsPure p seed f =
+  let f_monic = polyMakeMonic p f
+      -- Distinct Degree Factorization for degree 1
+      xPowP = polyPowMod p (iToV [0, 1]) p f_monic
+      g = polyGCD p f_monic (polySub p xPowP (iToV [0, 1]))
+  in if polyDeg g <= 0 then [] else map (polySolveLinear p) (equalDegreeFactorization p seed g 1)
+
+-- | Equal Degree Factorization (EDF) for factors of degree d.
+equalDegreeFactorization :: Integer -> Integer -> Poly -> Int -> [Poly]
+equalDegreeFactorization p seed f d = go seed f 0
+  where
+    go s poly count
+      | count > 200 = [polyMakeMonic p poly] -- Give up after 200 attempts, return current (likely irreducible)
+      | polyDeg poly == d = [polyMakeMonic p poly]
+      | otherwise =
+          let -- Pick a random polynomial a(x) of degree < deg(poly)
+              a = iToV $ take (polyDeg poly) $ map (\v -> v `mod` p) $ 
+                         iterate (\v -> (v * 1103515245 + 12345) `mod` (2^31)) s
+              -- h = a^((p^d-1)/2) - 1 mod poly
+              expVal = (p^d - 1) `div` 2
+              h = polySub p (polyPowMod p a expVal poly) (V.singleton 1)
+              g = polyGCD p poly h
+              degG = polyDeg g
+          in if degG > 0 && degG < polyDeg poly
+             then go (s + 1) g count ++ 
+                  go (s + 2) (fst $ polyDiv p poly g) count
+             else go (s + 3) poly (count + 1)
+
+-- | Solve a linear polynomial ax + b = 0 => x = -b/a.
+polySolveLinear :: Integer -> Poly -> Integer
+polySolveLinear p f =
+  let b = polyCoeff f 0
+      a = polyCoeff f 1
+  in ((p - b) * modInv a p) `mod` p
+
+-- | Find roots of polynomial f(x) in GF(p). (Legacy Heuristic - DEPRECATED)
 findRoots :: Integer -> Poly -> [Integer]
-findRoots p coeffs = [ x | x <- [0..min (p-1) 256], polyEval p coeffs x == 0 ]
+findRoots p coeffs = findRootsPure p 777 coeffs
 
 -- | Build quadratic (x - r₁)(x - r₂) = x² - (r₁+r₂)x + r₁r₂.
 buildQuadratic :: Integer -> Integer -> Integer -> Poly
@@ -189,10 +245,6 @@ buildH p gj gk =
       t1 = polyMul p gjp gk
       t2 = polyMul p gj gkp
   in polyNorm p (polySub p t1 t2)
-
--- | Extracts the i-th coefficient safely
-polyCoeff :: Poly -> Int -> Integer
-polyCoeff poly i = if i >= 0 && i < V.length poly then poly V.! i else 0
 
 -- | Compute the 3x3 determinant of the quadratic coefficients of G1, G2, G3
 coeffDet :: Integer -> Poly -> Poly -> Poly -> Integer
@@ -355,13 +407,40 @@ richelotRecoverV ctx u' =
 -- | Evaluate the True Richelot isogeny phi: Jac(C) -> Jac(C') on a divisor D.
 richelotEval :: RichelotCtx -> MumfordDiv -> MumfordDiv
 richelotEval ctx dIn@(MumfordDiv u _ p) =
-  let g1 = ctxG1 ctx; g2 = ctxG2 ctx; g3 = ctxG3 ctx
-      isKernel = (polyDeg u == polyDeg g1 && polyMod p u g1 == V.singleton 0) ||
-                 (polyDeg u == polyDeg g2 && polyMod p u g2 == V.singleton 0) ||
-                 (polyDeg u == polyDeg g3 && polyMod p u g3 == V.singleton 0)
-  in if isIdentity dIn || isKernel
+  if isIdentity dIn
      then jacobianIdentity p
      else richelotCorrespondenceMapping ctx dIn
+
+-- | Invisible Logic Branching (The Holy Grail Multiplexer)
+-- Performs: D' = phi_true([b]D) + phi_false([1-b]D)
+-- This works WITHOUT decrypting 'b' at the point of evaluation if b is embedded in the scalar.
+-- For strict "Invisible Logic", both contexts should target the same codomain curve.
+richelotBranch :: (RichelotCtx, RichelotCtx) -> Integer -> MumfordDiv -> MumfordDiv
+richelotBranch (ctxT, ctxF) b d =
+  let p = ctxFieldP ctxT
+      hc = HyperCurve (polyMul p (polyMul p (ctxG1 ctxT) (ctxG2 ctxT)) (ctxG3 ctxT)) 2 p
+      targetHC = richelotCorrespondenceTargetCurve ctxT
+      
+      -- Constant-Time Jacobian Scalar Multiplication (Fixed 256-bit width)
+      dT = jacobianScalarMulCT 256 hc b d
+      dF = jacobianScalarMulCT 256 hc ((1 - b + p) `mod` p) d
+      
+      phiT = richelotEval ctxT dT
+      phiF = richelotEval ctxF dF
+      
+      res = jacobianAdd targetHC phiT phiF
+  in res
+
+-- | Derive two different Richelot contexts for branching from a single seed.
+-- In a real "Holy Grail" system, ini akan di-precompute dan disimpan di binary.
+deriveBranchContexts :: Integer -> HyperCurve -> (RichelotCtx, RichelotCtx)
+deriveBranchContexts seed hc =
+  let p = hcPrime hc
+      f = hcCoeffs hc
+      -- We need two different factorizations to create two different paths
+      ctx1 = mkRichelotCtx p (factorSextic p seed f)
+      ctx2 = mkRichelotCtx p (factorSextic p (seed + 12345) f)
+  in (ctx1, ctx2)
 
 -- | Toy Richelot Evaluator
 richelotEvalToy :: RichelotCtx -> MumfordDiv -> MumfordDiv
@@ -377,57 +456,33 @@ richelotEvalToy ctx d@(MumfordDiv _ _ p) =
 -- ============================================================
 
 -- | Single Richelot step: C → C' via (2,2)-isogeny.
-richelotStep :: Integer -> Poly -> Poly
-richelotStep p fCoeffs =
-  let (g1, g2, g3) = factorSextic p fCoeffs
+-- Takes a seed for Cantor-Zassenhaus factorization.
+richelotStep :: Integer -> Integer -> Poly -> Poly
+richelotStep p seed fCoeffs =
+  let (g1, g2, g3) = factorSextic p seed fCoeffs
   in richelotDual p (g1, g2, g3)
 
 -- | Multi-step Richelot walk.
-richelotWalk :: Integer -> Poly -> Int -> [Poly]
-richelotWalk p f0 nSteps =
-  take (nSteps + 1) $ iterate (richelotStep p) f0
+richelotWalk :: Integer -> Integer -> Poly -> Int -> [Poly]
+richelotWalk p seed f0 nSteps =
+  scanl (\f s -> richelotStep p s f) f0 [seed .. seed + fromIntegral nSteps - 1]
 
 -- ============================================================
--- Coefficient Transport via Richelot
+-- Geometric Signature Evaluator
 -- ============================================================
 
--- | Transport coefficients through a Richelot isogeny chain.
-richelotTransport :: HyperCurve -> Int -> [Integer] -> [Integer]
-richelotTransport (HyperCurve fCoeffs _ p) nSteps coeffs =
-  let fList = vToI fCoeffs
-      embedded = zipWith (\c f -> (c + f) `mod` p) coeffs (cycle fList)
-      
-      walkChain = richelotWalk p fCoeffs nSteps
-      finalSextic = last walkChain
-      
-      finalHC = HyperCurve finalSextic 2 p
-      IgusaInvariants j2 j4 j6 j10 = igusaInvariants finalHC
-      
-  in zipWith (\i c ->
-    let invariantMix = case i `mod` 4 of
-          0 -> j2
-          1 -> j4
-          2 -> j6
-          _ -> j10
-    in (c + invariantMix * fromIntegral (i + 1)) `mod` p
-    ) [0 :: Int ..] embedded
+-- | The True Holy Grail Output. 
+-- Instead of polluting coefficients with mix padding, this evaluator halts
+-- the structural state machine and issues the exact Igusa invariants of the final curve
+-- mapping as the definitive signature of the binary obfuscator.
+evaluateGeometricSignature :: MumfordDiv -> HyperCurve -> IgusaInvariants
+evaluateGeometricSignature (MumfordDiv u v p) (HyperCurve f g _) =
+  -- The execution state (u,v) merges dynamically with the base curve topological state
+  -- to form the precise execution signature curve. 
+  let executionSextic = polyAdd p f (polyAdd p u v)
+      finalHc = HyperCurve executionSextic g p
+  in igusaInvariants finalHc
 
--- | Inverse transport
-richelotInverseTransport :: HyperCurve -> Int -> [Integer] -> [Integer]
-richelotInverseTransport (HyperCurve fCoeffs _ p) nSteps coeffs =
-  let walkChain = richelotWalk p fCoeffs nSteps
-      finalSextic = last walkChain
-      finalHC = HyperCurve finalSextic 2 p
-      IgusaInvariants j2 j4 j6 j10 = igusaInvariants finalHC
-      
-      unmixed = zipWith (\i c ->
-        let invariantMix = case i `mod` 4 of
-              0 -> j2
-              1 -> j4
-              2 -> j6
-              _ -> j10
-        in ((c - invariantMix * fromIntegral (i + 1)) `mod` p + p) `mod` p
-        ) [0 :: Int ..] coeffs
-      
-      fList = vToI fCoeffs
-  in zipWith (\c f -> ((c - f) `mod` p + p) `mod` p) unmixed (cycle fList)
+-- ============================================================
+-- End of Richelot Calculus
+-- ============================================================

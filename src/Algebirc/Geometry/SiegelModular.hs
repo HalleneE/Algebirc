@@ -31,6 +31,10 @@ module Algebirc.Geometry.SiegelModular
 
 import Algebirc.Core.Types
 import Algebirc.Geometry.EllipticCurve (modInv, modPow)
+import Algebirc.Geometry.HyperellipticCurve (polyMul, polySub, polyMod, polyDiv, polyExtGCD)
+import qualified Data.Vector as V
+
+-- ... (skipping to cantorZassenhausRoots to replace Poly) ...
 import Algebirc.Geometry.HyperellipticCurve (igusaInvariants, polyEval)
 import Data.Bits
 import Data.List (foldl')
@@ -85,10 +89,42 @@ siegelRoots p coeffs
 -- Returns roots of f(x) in GF(p).
 cantorZassenhausRoots :: Integer -> [Integer] -> [Integer]
 cantorZassenhausRoots p coeffs =
-  let -- Try a set of deterministic probe points
-      probes = [ modPow (fromIntegral i * 2654435761) 1 p | i <- [0..min 127 (p-1)] ]
-      roots = filter (\x -> siegelEval p coeffs x == 0) probes
-  in roots
+  let f = V.fromList coeffs
+      
+      -- Polynomial exponentiation (double-and-add)
+      polyModPow :: Poly -> Integer -> Poly -> Poly
+      polyModPow base e modulus =
+        let go 0 = V.singleton 1
+            go 1 = polyMod p base modulus
+            go k
+              | even k = let half = go (k `div` 2) in polyMod p (polyMul p half half) modulus
+              | otherwise = let half = go (k - 1) in polyMod p (polyMul p base half) modulus
+        in go e
+
+      -- Find roots recursively
+      findRoots :: Poly -> [Integer]
+      findRoots poly
+        | V.length poly <= 1 = []
+        | V.length poly == 2 = 
+            let a = poly V.! 1
+                b = poly V.! 0
+                invA = modPow a (p - 2) p
+            in [((p - b) * invA) `mod` p]
+        | otherwise =
+            let trySplit a_val =
+                  let t = V.fromList [a_val `mod` p, 1] -- x + a
+                      exponent = (p - 1) `div` 2
+                      d1 = polyModPow t exponent poly
+                      d = polySub p d1 (V.singleton 1)
+                      (g, _, _) = polyExtGCD p poly d
+                  in if V.length g > 1 && V.length g < V.length poly
+                     then let (q, _) = polyDiv p poly g
+                          in findRoots g ++ findRoots q
+                     else []
+                -- Try deterministic linear shifts
+                validSplits = dropWhile null [ trySplit (fromIntegral a) | a <- [1..100] ]
+            in if null validSplits then [] else head validSplits
+  in findRoots f
 
 -- ============================================================
 -- Walk in the Siegel Modular Graph
