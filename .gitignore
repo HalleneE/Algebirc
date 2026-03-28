@@ -5,6 +5,14 @@ dist/
 cabal.sandbox.config
 publish/
 
+# Build logs
+*.log
+*.asm
+
+# Internal Docs / Publishing (Private)
+TESSERACT_ARCHITECTURE.md
+publish/
+
 # Shell scripts (not core)
 *.sh
 *.bat
@@ -12,7 +20,6 @@ publish/
 
 # Status/docs (not core)
 PROJECT_STATUS.md
-README.md
 
 # Editor
 *.swp
@@ -31,4 +38,3 @@ README.md
 
 # Misc
 .DS_Store
-\npublish/
